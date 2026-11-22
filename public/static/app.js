@@ -39,6 +39,7 @@ const icons = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
   trash:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+  link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
   x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   retry:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v5h5"/></svg>',
@@ -543,6 +544,26 @@ function drawFiles() {
           },
         );
         const when = new Date(f.createdAt).toLocaleDateString("en", { month: "short", day: "numeric" });
+        const share = h(
+          "button",
+          {
+            class: f.guestLink ? "icon-btn on" : "icon-btn",
+            type: "button",
+            title: f.guestLink ? "Copy guest link" : "Create guest link",
+            "aria-label": `Guest link for ${f.name}`,
+            onclick: () => shareFile(f),
+          },
+          icon("link"),
+        );
+        const linkLine =
+          f.guestLink &&
+          h(
+            "div",
+            { class: "sub link-line" },
+            `Guest link · ${f.guestLink.downloads} download${f.guestLink.downloads === 1 ? "" : "s"}`,
+            h("button", { class: "linkish", type: "button", onclick: () => copyLink(f.guestLink.url) }, "Copy"),
+            h("button", { class: "linkish", type: "button", onclick: () => disableLink(f) }, "Disable"),
+          );
         return h(
           "li",
           {},
@@ -552,7 +573,9 @@ function drawFiles() {
             { class: "meta" },
             h("a", { class: "name", href: `/api/files/${f.id}/download`, download: "", title: f.name }, f.name),
             h("div", { class: "sub" }, [formatBytes(f.size), f.uploader && `from ${f.uploader}`, when].filter(Boolean).join(" · ")),
+            linkLine,
           ),
+          share,
           h(
             "a",
             { class: "icon-btn", href: `/api/files/${f.id}/download`, download: "", title: "Download", "aria-label": `Download ${f.name}` },
@@ -562,6 +585,39 @@ function drawFiles() {
         );
       }),
   );
+}
+
+// ---------- guest links ----------
+
+async function copyLink(url, message = "Guest link copied. Anyone with it can download this file, and nothing else.") {
+  try {
+    await navigator.clipboard.writeText(url);
+    toast(message);
+  } catch {
+    prompt("Copy this guest link:", url);
+  }
+}
+
+async function shareFile(f) {
+  try {
+    const { guestLink } = await api(`/api/files/${f.id}/link`, { method: "POST" });
+    f.guestLink = guestLink;
+    drawFiles();
+    await copyLink(guestLink.url);
+  } catch (ex) {
+    toast(ex.message);
+  }
+}
+
+async function disableLink(f) {
+  try {
+    await api(`/api/files/${f.id}/link`, { method: "DELETE" });
+    f.guestLink = null;
+    drawFiles();
+    toast("Guest link disabled. It no longer works.");
+  } catch (ex) {
+    toast(ex.message);
+  }
 }
 
 // ---------- uploads ----------

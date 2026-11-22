@@ -2,7 +2,7 @@ import { mkdirSync, readdirSync, rmSync, statfsSync } from "node:fs";
 import { open, rename, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type { Config } from "./config.ts";
-import { openDb, type FileRow, type UploadRow, type WorkspaceRow } from "./db.ts";
+import { openDb, type FileRow, type ShareLinkRow, type UploadRow, type WorkspaceRow } from "./db.ts";
 import {
   COOKIE,
   RateLimiter,
@@ -89,6 +89,11 @@ export function createApp(cfg: Config): App {
     ),
     deleteFile: db.query("DELETE FROM files WHERE id = ?"),
     allFileIds: db.query<{ id: string }, []>("SELECT id FROM files"),
+    linkForFile: db.query<ShareLinkRow, [string]>("SELECT * FROM share_links WHERE file_id = ?"),
+    getLink: db.query<ShareLinkRow, [string]>("SELECT * FROM share_links WHERE token = ?"),
+    insertLink: db.query("INSERT INTO share_links (token, file_id, created_by, created_at) VALUES (?, ?, ?, ?)"),
+    deleteLinkForFile: db.query("DELETE FROM share_links WHERE file_id = ?"),
+    countDownload: db.query("UPDATE share_links SET downloads = downloads + 1 WHERE token = ?"),
     uploadsIn: db.query<{ id: string }, [string]>("SELECT id FROM uploads WHERE workspace_id = ?"),
     getUpload: db.query<UploadRow, [string]>("SELECT * FROM uploads WHERE id = ?"),
     insertUpload: db.query(
@@ -150,14 +155,51 @@ export function createApp(cfg: Config): App {
     return base + days * DAY;
   }
 
-  const fileView = (f: FileRow) => ({
-    id: f.id,
-    name: f.name,
-    size: f.size,
-    mime: f.mime,
-    uploader: f.uploader,
-    createdAt: f.created_at,
+  const linkView = (l: ShareLinkRow) => ({
+    url: `${cfg.publicOrigin}/d/${l.token}`,
+    createdBy: l.created_by,
+    createdAt: l.created_at,
+    downloads: l.downloads,
   });
+
+  const fileView = (f: FileRow) => {
+    const link = q.linkForFile.get(f.id);
+    return {
+      id: f.id,
+      name: f.name,
+      size: f.size,
+      mime: f.mime,
+      uploader: f.uploader,
+      createdAt: f.created_at,
+      guestLink: link ? linkView(link) : null,
+    };
+  };
+
+  /** Resolve a guest token to its file, or 404 — without saying which part failed. */
+  function guestFile(token: string): { link: ShareLinkRow; file: FileRow; ws: WorkspaceRow } {
+    const gone = () => new HttpError(404, "This link is no longer available.");
+    const link = q.getLink.get(token);
+    if (!link) throw gone();
+    const file = q.getFile.get(link.file_id);
+    if (!file) throw gone();
+    let ws: WorkspaceRow;
+    try {
+      ws = liveWorkspace(file.workspace_id);
+    } catch {
+      throw gone();
+    }
+    return { link, file, ws };
+  }
+
+  function fileDownload(f: FileRow): Response {
+    return new Response(Bun.file(filePath(f.id)), {
+      headers: {
+        "Content-Type": f.mime,
+        "Content-Length": String(f.size),
+        "Content-Disposition": contentDisposition(f.name),
+      },
+    });
+  }
 
   const workspaceView = (w: WorkspaceRow) => ({
     id: w.id,
@@ -341,6 +383,27 @@ export function createApp(cfg: Config): App {
       return staticFile(path.slice(1), "no-cache");
     }
 
+    // Guest links: anyone with the token may download that one file — nothing else.
+    let g: RegExpMatchArray | null;
+    if (method === "GET" && (g = path.match(/^\/d\/([a-z0-9]{26})$/))) {
+      return staticFile("download.html", "no-store");
+    }
+    if (method === "GET" && (g = path.match(/^\/api\/guest\/([a-z0-9]{26})$/))) {
+      const { link, file, ws } = guestFile(g[1]!);
+      return json({
+        name: file.name,
+        size: file.size,
+        sharedBy: link.created_by || file.uploader,
+        createdAt: file.created_at,
+        expiresAt: ws.expires_at,
+      });
+    }
+    if (method === "GET" && (g = path.match(/^\/d\/([a-z0-9]{26})\/download$/))) {
+      const { link, file } = guestFile(g[1]!);
+      q.countDownload.run(link.token);
+      return fileDownload(file);
+    }
+
     if (method !== "GET" && method !== "HEAD") {
       // Same-origin check on writes (defence in depth on top of SameSite=Lax).
       const origin = req.headers.get("origin");
@@ -458,13 +521,25 @@ export function createApp(cfg: Config): App {
       const f = q.getFile.get(m[1]!);
       if (!f) throw new HttpError(404, "File not found");
       liveWorkspace(f.workspace_id);
-      return new Response(Bun.file(filePath(f.id)), {
-        headers: {
-          "Content-Type": f.mime,
-          "Content-Length": String(f.size),
-          "Content-Disposition": contentDisposition(f.name),
-        },
-      });
+      return fileDownload(f);
+    }
+    if ((m = path.match(/^\/api\/files\/([a-z0-9]+)\/link$/))) {
+      const f = q.getFile.get(m[1]!);
+      if (!f) throw new HttpError(404, "File not found");
+      liveWorkspace(f.workspace_id);
+      if (method === "POST") {
+        // One guest link per file; asking again returns the existing one.
+        let link = q.linkForFile.get(f.id);
+        if (!link) {
+          q.insertLink.run(newId(26), f.id, who.name ? displayName(who.name) : "", Date.now());
+          link = q.linkForFile.get(f.id)!;
+        }
+        return json({ guestLink: linkView(link) });
+      }
+      if (method === "DELETE") {
+        q.deleteLinkForFile.run(f.id);
+        return json({ ok: true });
+      }
     }
     if ((m = path.match(/^\/api\/files\/([a-z0-9]+)$/)) && method === "DELETE") {
       const f = q.getFile.get(m[1]!);

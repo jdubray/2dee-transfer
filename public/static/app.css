@@ -533,3 +533,21 @@ details.settings[open] > summary { margin-bottom: 12px; }
 .between { justify-content: space-between; }
 
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- buttons with icons, guest page, guest links ---------- */
+
+.btn svg { width: 18px; height: 18px; display: block; }
+.btn > span[aria-hidden] { display: inline-flex; }
+
+.guest-kicker { margin-top: 0; }
+.guest-file { display: flex; align-items: center; gap: 14px; }
+.guest-icon { width: 52px; height: 52px; border-radius: 14px; font-size: 12px; }
+.guest-name { margin: 0 0 4px; }
+.guest-file .meta { min-width: 0; }
+
+.icon-btn.on { color: var(--accent); background: var(--accent-soft); }
+@media (prefers-color-scheme: dark) { .icon-btn.on { color: #c9bcff; } }
+
+.link-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.link-line .linkish { font-size: 13px; color: var(--accent); }
+@media (prefers-color-scheme: dark) { .link-line .linkish { color: #c9bcff; } }

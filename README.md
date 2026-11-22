@@ -4,6 +4,11 @@ A small, private file-transfer site at **transfer.2dee.org**.
 It works like WeTransfer: you get a card with a big "+", drop files in, and share a link.
 
 - **Personal access keys.** Each person has their own key, and uploads are labelled with their name. Rotating or revoking one key signs out only that person. No accounts or passwords to manage.
+- **Guest links.** A key holder can click the link icon on any file to get a public link (`/d/<token>`, 130-bit random token).
+  - Anyone with the link can download **that one file**, without a key. They can't see the workspace or other files, and can't upload.
+  - The link shows a download count and can be disabled at any time.
+  - It stops working when the file is deleted or the workspace expires.
+  - Only key holders can open workspaces and upload.
 - **Workspaces.** Each one is a shared folder with its own link (`/w/<id>`). You can rename it, set it to expire after 1, 7, 30 or 90 days or never, and delete it.
 - **Up to 100 MB per file.** Uploads go up in 8 MiB chunks, so they fit under Cloudflare's 100 MB request cap. A dropped connection retries and resumes where it stopped.
 - **Download** files one at a time, or **all at once as a .zip**. The zip is streamed straight from disk, with no temp copy.
