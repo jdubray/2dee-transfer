@@ -1,0 +1,21 @@
+[Unit]
+Description=Cloudflare tunnel for transfer.2dee.org
+After=network-online.target
+Wants=network-online.target 2dee-transfer.service
+
+[Service]
+# Same shape as the host's cloudflared-2dee.service.
+TimeoutStartSec=15
+Type=notify
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate --config /etc/cloudflared-transfer/config.yml tunnel run
+Restart=on-failure
+RestartSec=5s
+
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadOnlyPaths=/etc/cloudflared-transfer
+
+[Install]
+WantedBy=multi-user.target

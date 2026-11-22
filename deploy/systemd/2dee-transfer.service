@@ -1,0 +1,24 @@
+[Unit]
+Description=2dee transfer (Bun) — transfer.2dee.org
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=transfer
+Group=transfer
+WorkingDirectory=/opt/2dee-transfer
+EnvironmentFile=/etc/2dee-transfer.env
+ExecStart=/usr/local/bin/bun run src/main.ts
+Restart=on-failure
+RestartSec=2s
+
+# Hardening — the app only writes under its data dir.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/2dee-transfer
+
+[Install]
+WantedBy=multi-user.target

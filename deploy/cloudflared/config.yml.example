@@ -1,0 +1,21 @@
+# Dedicated cloudflared tunnel for transfer.2dee.org (recommended — mirrors
+# how jj.2dee.org runs its own tunnel, cert and config in isolation).
+#
+# Installed by deploy/setup-tunnel.sh, which substitutes <TUNNEL-UUID> and
+# writes this to /etc/cloudflared-transfer/config.yml.
+
+tunnel: <TUNNEL-UUID>
+credentials-file: /etc/cloudflared-transfer/<TUNNEL-UUID>.json
+loglevel: info
+no-autoupdate: true
+
+originRequest:
+  connectTimeout: 10s
+  # Must be transfer.2dee.org: the app refuses writes whose Origin host
+  # doesn't match the Host header.
+  httpHostHeader: transfer.2dee.org
+
+ingress:
+  - hostname: transfer.2dee.org
+    service: http://127.0.0.1:4180
+  - service: http_status:404

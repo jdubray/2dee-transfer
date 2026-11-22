@@ -1,0 +1,8 @@
+[Unit]
+Description=2dee transfer — pull origin/main and restart on change
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/2dee-transfer/deploy/auto-deploy.sh
