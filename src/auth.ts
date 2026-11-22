@@ -18,23 +18,45 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ha, hb);
 }
 
-export function checkAccessCode(given: string, expected: string): boolean {
-  return safeEqual(given.trim(), expected);
+/** A named access key. name is "" for the legacy single shared code. */
+export interface AccessKey {
+  name: string;
+  code: string;
 }
 
-export function makeSession(secret: string, accessCode: string, ttlSeconds: number, now = Date.now()): string {
-  const payload = `v1.${Math.floor(now / 1000) + ttlSeconds}`;
-  return `${payload}.${sign(payload, secret, accessCode)}`;
+/** Which key (if any) matches. Every key is compared, so timing doesn't reveal which. */
+export function findAccessKey(given: string, keys: AccessKey[]): AccessKey | null {
+  const g = given.trim();
+  let match: AccessKey | null = null;
+  for (const k of keys) if (safeEqual(g, k.code) && !match) match = k;
+  return match;
 }
 
-export function verifySession(token: string | undefined, secret: string, accessCode: string, now = Date.now()): boolean {
-  if (!token) return false;
+// Each session is signed with its own key's code, so removing or rotating one
+// person's key signs out only that person.
+export function makeSession(secret: string, key: AccessKey, ttlSeconds: number, now = Date.now()): string {
+  const payload = `v2.${key.name}.${Math.floor(now / 1000) + ttlSeconds}`;
+  return `${payload}.${sign(payload, secret, key.code)}`;
+}
+
+export function verifySession(token: string | undefined, secret: string, keys: AccessKey[], now = Date.now()): AccessKey | null {
+  if (!token) return null;
   const parts = token.split(".");
-  if (parts.length !== 3 || parts[0] !== "v1") return false;
-  const payload = `${parts[0]}.${parts[1]}`;
-  if (!safeEqual(parts[2]!, sign(payload, secret, accessCode))) return false;
-  const exp = Number(parts[1]);
-  return Number.isFinite(exp) && exp * 1000 > now;
+  if (parts.length !== 4 || parts[0] !== "v2") return null;
+  const key = keys.find((k) => k.name === parts[1]);
+  if (!key) return null;
+  const payload = `${parts[0]}.${parts[1]}.${parts[2]}`;
+  if (!safeEqual(parts[3]!, sign(payload, secret, key.code))) return null;
+  const exp = Number(parts[2]);
+  return Number.isFinite(exp) && exp * 1000 > now ? key : null;
+}
+
+/** "jean-pierre" -> "Jean-Pierre" */
+export function displayName(name: string): string {
+  return name
+    .split("-")
+    .map((p) => (p ? p[0]!.toUpperCase() + p.slice(1) : p))
+    .join("-");
 }
 
 export function readCookie(req: Request, name: string): string | undefined {

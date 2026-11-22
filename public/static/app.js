@@ -181,11 +181,12 @@ async function render() {
     try {
       state.session = await api("/api/session");
     } catch {
-      setCard(h("div", { class: "loading" }, "Can't reach the server. Try again in a moment."));
+      setCard(h("div", { class: "loading" }, "The server is unavailable. Please try again shortly."));
       return;
     }
   }
   logoutBtn.hidden = !state.session.authenticated;
+  logoutBtn.textContent = state.session.user ? `Sign out · ${state.session.user}` : "Sign out";
   if (!state.session.authenticated) return renderLogin();
 
   const m = location.pathname.match(/^\/w\/([a-z0-9]+)$/);
@@ -209,12 +210,12 @@ function renderLogin() {
     class: "field",
     type: "password",
     name: "code",
-    placeholder: "Access code",
+    placeholder: "Access key",
     autocomplete: "current-password",
     required: true,
-    "aria-label": "Access code",
+    "aria-label": "Access key",
   });
-  const btn = h("button", { class: "btn btn-primary btn-block", type: "submit" }, "Come on in");
+  const btn = h("button", { class: "btn btn-primary btn-block", type: "submit" }, "Sign in");
   const form = h(
     "form",
     {
@@ -242,8 +243,8 @@ function renderLogin() {
     h(
       "div",
       { class: "card-body" },
-      h("h2", {}, "Hey, friend 👋"),
-      h("p", { class: "muted mb-18" }, "This is a private space. Enter the access code to continue."),
+      h("h2", {}, "Sign in"),
+      h("p", { class: "muted mb-18" }, "Enter your personal access key to continue."),
       form,
     ),
   );
@@ -306,7 +307,7 @@ async function renderHome() {
       "div",
       { class: "card-body" },
       h("h2", {}, "Workspaces"),
-      h("p", { class: "muted" }, "Each workspace is a shared folder with its own link. Files up to 100 MB each."),
+      h("p", { class: "muted" }, `Each workspace is a shared folder with its own link. Files up to ${formatBytes(state.session.maxFileBytes)} each.`),
       h("div", { class: "mt-18" }, form),
       h("div", { class: "section-title" }, "Recent"),
       h("div", { class: "scroll" }, list),
@@ -316,7 +317,7 @@ async function renderHome() {
   try {
     const { workspaces } = await api("/api/workspaces");
     if (workspaces.length === 0) {
-      list.replaceChildren(h("li", { class: "empty" }, "No workspaces yet — create the first one above."));
+      list.replaceChildren(h("li", { class: "empty" }, "No workspaces yet. Create one above to get started."));
       return;
     }
     list.replaceChildren(
@@ -359,7 +360,7 @@ async function renderWorkspace(id) {
         h(
           "div",
           { class: "card-body" },
-          h("h2", {}, "Hmm."),
+          h("h2", {}, "Workspace unavailable"),
           h("p", { class: "muted" }, ex.message),
           h("p", {}, h("a", { class: "btn btn-soft mt-16", href: "/", "data-link": true }, "Back to workspaces")),
         ),
@@ -390,17 +391,20 @@ async function renderWorkspace(id) {
       "div",
       {},
       h("strong", {}, "Add files"),
-      h("span", { class: "faint" }, `Drop them here or click · up to ${formatBytes(state.session.maxFileBytes)} each`),
+      h("span", { class: "faint" }, `Drag files here or browse · up to ${formatBytes(state.session.maxFileBytes)} per file`),
     ),
   );
 
-  const who = h("input", {
-    value: uploaderName(),
-    placeholder: "your name (optional)",
-    maxlength: "40",
-    "aria-label": "Your name",
-    oninput: (e) => setUploaderName(e.target.value.trim()),
-  });
+  // Personal access keys already identify the uploader; only the shared code asks for a name.
+  const who = state.session.user
+    ? h("b", {}, state.session.user)
+    : h("input", {
+        value: uploaderName(),
+        placeholder: "your name (optional)",
+        maxlength: "40",
+        "aria-label": "Your name",
+        oninput: (e) => setUploaderName(e.target.value.trim()),
+      });
 
   const queueList = h("ul", { class: "list" });
   const fileList = h("ul", { class: "list" });
@@ -417,7 +421,7 @@ async function renderWorkspace(id) {
         const link = `${location.origin}/w/${ws.id}`;
         try {
           await navigator.clipboard.writeText(link);
-          toast("Link copied — friends will need the access code too.");
+          toast("Link copied. Recipients need their own access key to open it.");
         } catch {
           prompt("Copy this link:", link);
         }
@@ -462,7 +466,7 @@ async function renderWorkspace(id) {
   );
   const deleteBtn = armable(
     h("button", { class: "btn btn-danger btn-small", type: "button" }, "Delete workspace"),
-    "Click again to delete everything",
+    "Click again to confirm deletion",
     async () => {
       try {
         await api(`/api/workspaces/${ws.id}`, { method: "DELETE" });
@@ -517,7 +521,7 @@ function drawFiles() {
   zipBtn.hidden = files.length === 0;
 
   if (files.length === 0 && !state.queue.some((q) => q.wsId === wsViews.wsId)) {
-    fileList.replaceChildren(h("li", { class: "empty" }, "Nothing here yet. Add the first file."));
+    fileList.replaceChildren(h("li", { class: "empty" }, "This workspace is empty. Add files to get started."));
     return;
   }
   fileList.replaceChildren(
@@ -577,7 +581,7 @@ function addFiles(fileList) {
     };
     if (file.size > state.session.maxFileBytes) {
       item.status = "failed";
-      item.error = `Too big — the limit is ${formatBytes(state.session.maxFileBytes)}`;
+      item.error = `Exceeds the ${formatBytes(state.session.maxFileBytes)} file size limit`;
     }
     state.queue.push(item);
   }
@@ -620,7 +624,7 @@ function sendChunk(item, offset, blob) {
       if (xhr.status >= 200 && xhr.status < 300) resolve(data);
       else reject(new ApiError(xhr.status, data));
     };
-    xhr.onerror = () => reject(new ApiError(0, { error: "Network hiccup" }));
+    xhr.onerror = () => reject(new ApiError(0, { error: "Network error" }));
     xhr.onabort = () => reject(new ApiError(-1, { error: "Cancelled" }));
     xhr.send(blob);
   });
@@ -656,7 +660,7 @@ async function runUpload(item) {
         }
         const retriable = ex.status === 0 || ex.status >= 500 || ex.status === 408 || ex.status === 429;
         if (!retriable || ++failures > 6) throw ex;
-        item.error = `Connection trouble — retrying (${failures}/6)…`;
+        item.error = `Connection interrupted. Retrying (${failures}/6)…`;
         drawItem(item);
         await sleep(Math.min(15000, 800 * 2 ** failures));
         try {

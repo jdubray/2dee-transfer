@@ -70,5 +70,8 @@ export function openDb(dataDir: string): Database {
       updated_at   INTEGER NOT NULL
     );
   `);
+  // Additive migrations for databases created by older versions.
+  const uploadCols = db.query<{ name: string }, []>("PRAGMA table_info(uploads)").all().map((c) => c.name);
+  if (!uploadCols.includes("file_id")) db.run("ALTER TABLE uploads ADD COLUMN file_id TEXT");
   return db;
 }

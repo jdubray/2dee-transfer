@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
+import type { AccessKey } from "./auth.ts";
 
 export const MiB = 1024 * 1024;
 
@@ -8,7 +9,7 @@ export interface Config {
   host: string;
   port: number;
   dataDir: string;
-  accessCode: string;
+  accessKeys: AccessKey[];
   sessionSecret: string;
   /** Public URL, e.g. https://transfer.2dee.org. https => Secure cookies. */
   publicOrigin: string;
@@ -41,25 +42,50 @@ function loadSecret(dataDir: string): string {
   return secret;
 }
 
+/**
+ * TRANSFER_ACCESS_KEYS="jean-jacques:abcd-efgh-jkmn,edouard:..." gives each person
+ * their own key. TRANSFER_ACCESS_CODE (one shared, unnamed code) still works too.
+ */
+export function parseAccessKeys(keysEnv: string | undefined, sharedCode: string | undefined): AccessKey[] {
+  const keys: AccessKey[] = [];
+  for (const entry of (keysEnv ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
+    const colon = entry.indexOf(":");
+    const name = entry.slice(0, colon).trim().toLowerCase();
+    const code = entry.slice(colon + 1).trim();
+    if (colon < 1 || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(name)) {
+      throw new Error(`TRANSFER_ACCESS_KEYS: bad entry "${entry.slice(0, Math.max(colon, 0))}…" (want name:key)`);
+    }
+    if (code.length < 6) throw new Error(`TRANSFER_ACCESS_KEYS: key for ${name} is shorter than 6 characters`);
+    if (keys.some((k) => k.name === name)) throw new Error(`TRANSFER_ACCESS_KEYS: ${name} is listed twice`);
+    keys.push({ name, code });
+  }
+  if (sharedCode) {
+    if (sharedCode.length < 6) throw new Error("TRANSFER_ACCESS_CODE must be at least 6 characters");
+    keys.push({ name: "", code: sharedCode });
+  }
+  if (keys.length === 0) {
+    throw new Error(
+      "Set TRANSFER_ACCESS_KEYS (name:key,name:key) or TRANSFER_ACCESS_CODE. " +
+        "Example: TRANSFER_ACCESS_KEYS=me:$(openssl rand -hex 6) bun run dev",
+    );
+  }
+  if (new Set(keys.map((k) => k.code)).size !== keys.length) throw new Error("Two access keys are identical");
+  return keys;
+}
+
 export function loadConfig(): Config {
   const host = process.env.TRANSFER_HOST || "127.0.0.1";
   const port = int("TRANSFER_PORT", 4180);
   const dataDir = resolve(process.env.TRANSFER_DATA_DIR || "./var");
   mkdirSync(dataDir, { recursive: true });
 
-  const accessCode = process.env.TRANSFER_ACCESS_CODE || "";
-  if (accessCode.length < 6) {
-    throw new Error(
-      "TRANSFER_ACCESS_CODE must be set (at least 6 characters). " +
-        "Example: TRANSFER_ACCESS_CODE=$(openssl rand -hex 6) bun run dev",
-    );
-  }
+  const accessKeys = parseAccessKeys(process.env.TRANSFER_ACCESS_KEYS, process.env.TRANSFER_ACCESS_CODE);
 
   return {
     host,
     port,
     dataDir,
-    accessCode,
+    accessKeys,
     sessionSecret: loadSecret(dataDir),
     publicOrigin: process.env.TRANSFER_PUBLIC_ORIGIN || `http://${host}:${port}`,
     maxFileBytes: int("TRANSFER_MAX_FILE_BYTES", 100 * MiB),
