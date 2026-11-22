@@ -4,6 +4,7 @@
 #
 #   sudo bash deploy/install.sh                 # install from this checkout
 #   sudo TRANSFER_REPO=git@github.com:you/transfer.git bash deploy/install.sh
+#     (git@ URLs: first run prints a deploy key to add on GitHub, then re-run)
 #
 # It does NOT touch cloudflared; see deploy/cloudflared/ingress-snippet.yml.
 set -euo pipefail
@@ -22,12 +23,31 @@ install -d -o transfer -g transfer -m 0750 "$DATA"
 
 echo "==> code in $APP"
 if [ -n "${TRANSFER_REPO:-}" ]; then
+  SSHCMD="ssh"
+  if [[ "$TRANSFER_REPO" == git@* ]]; then
+    # Private repo over SSH: a read-only deploy key owned by the transfer user.
+    KEYDIR=/var/lib/2dee-transfer-deploy
+    KEY="$KEYDIR/id_ed25519"
+    install -d -o transfer -g transfer -m 0700 "$KEYDIR"
+    if [ ! -f "$KEY" ]; then
+      sudo -u transfer ssh-keygen -q -t ed25519 -N "" -C "2dee-transfer deploy key" -f "$KEY"
+      echo
+      echo "    Add this PUBLIC key as a read-only deploy key on the GitHub repo"
+      echo "    (Settings → Deploy keys → Add deploy key), then re-run this script:"
+      echo
+      cat "$KEY.pub"
+      exit 0
+    fi
+    SSHCMD="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$KEYDIR/known_hosts"
+  fi
   if [ -d "$APP/.git" ]; then
-    sudo -u transfer -H git -C "$APP" pull --ff-only
+    sudo -u transfer -H env GIT_SSH_COMMAND="$SSHCMD" git -C "$APP" pull --ff-only
   else
     install -d -o transfer -g transfer "$APP"
-    sudo -u transfer -H git clone "$TRANSFER_REPO" "$APP"
+    sudo -u transfer -H env GIT_SSH_COMMAND="$SSHCMD" git clone "$TRANSFER_REPO" "$APP"
   fi
+  # auto-deploy.sh fetches with plain `git`, so remember the SSH command in the repo.
+  sudo -u transfer -H git -C "$APP" config core.sshCommand "$SSHCMD"
 elif [ "$SRC" != "$APP" ]; then
   install -d -o transfer -g transfer "$APP"
   cp -a "$SRC/." "$APP/"
@@ -66,9 +86,8 @@ for _ in $(seq 1 20); do
   if curl -fsS http://127.0.0.1:4180/api/health >/dev/null 2>&1; then
     echo "    OK — listening on 127.0.0.1:4180"
     echo
-    echo "Next: add deploy/cloudflared/ingress-snippet.yml to your tunnel config,"
-    echo "      run 'cloudflared tunnel route dns <tunnel> transfer.2dee.org',"
-    echo "      restart that cloudflared service, then open https://transfer.2dee.org"
+    echo "Next: set up the tunnel (deploy/cloudflared/config.yml.example has the steps),"
+    echo "      then open https://transfer.2dee.org"
     exit 0
   fi
   sleep 0.5

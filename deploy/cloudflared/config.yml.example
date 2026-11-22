@@ -1,0 +1,27 @@
+# Dedicated cloudflared tunnel for transfer.2dee.org (recommended — mirrors
+# how jj.2dee.org runs its own tunnel, cert and config in isolation).
+#
+#   cloudflared tunnel create transfer              # prints <TUNNEL-UUID>
+#   cloudflared tunnel route dns transfer transfer.2dee.org
+#   sudo install -d /etc/cloudflared-transfer
+#   sudo install -m 0600 ~/.cloudflared/<TUNNEL-UUID>.json /etc/cloudflared-transfer/
+#   sed 's/<TUNNEL-UUID>/…/' this file | sudo tee /etc/cloudflared-transfer/config.yml
+#   sudo chown -R cloudflared:cloudflared /etc/cloudflared-transfer
+#   sudo cp deploy/systemd/cloudflared-transfer.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cloudflared-transfer
+
+tunnel: <TUNNEL-UUID>
+credentials-file: /etc/cloudflared-transfer/<TUNNEL-UUID>.json
+loglevel: info
+no-autoupdate: true
+
+originRequest:
+  connectTimeout: 10s
+  # Must be transfer.2dee.org: the app refuses writes whose Origin host
+  # doesn't match the Host header.
+  httpHostHeader: transfer.2dee.org
+
+ingress:
+  - hostname: transfer.2dee.org
+    service: http://127.0.0.1:4180
+  - service: http_status:404

@@ -1,9 +1,11 @@
-# Add this rule to the `ingress:` list of the tunnel that already serves
-# *.2dee.org (above the final `- service: http_status:404` catch-all),
-# then: sudo systemctl restart <that cloudflared service>
+# ALTERNATIVE to the dedicated tunnel in config.yml.example: add this rule to
+# the `ingress:` list of an existing tunnel (above the final
+# `- service: http_status:404` catch-all), then restart that cloudflared service.
 #
 #   cloudflared tunnel route dns <tunnel-name> transfer.2dee.org
 #
+# Keep the per-rule httpHostHeader: if the tunnel sets a different top-level
+# httpHostHeader (e.g. jj.2dee.org), every upload would be refused with 403.
   - hostname: transfer.2dee.org
     service: http://127.0.0.1:4180
     originRequest:

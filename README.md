@@ -45,14 +45,25 @@ sudo bash deploy/install.sh
 #   or, to have it track GitHub and auto-deploy on push:
 #   sudo TRANSFER_REPO=git@github.com:jdubray/2dee-transfer.git bash deploy/install.sh
 
-# 2. Point the hostname at the existing tunnel.
-cloudflared tunnel route dns <tunnel-name> transfer.2dee.org
-#    Add the rule in deploy/cloudflared/ingress-snippet.yml to that tunnel's config.yml,
-#    above the 404 catch-all, then restart that cloudflared service.
+#   With a git@ URL, the first run prints a deploy key. Add it to the repo as a
+#   read-only deploy key, then run the script again.
+
+# 2. Give it its own Cloudflare tunnel. This is the same pattern as jj.2dee.org.
+#    The full steps are at the top of deploy/cloudflared/config.yml.example:
+cloudflared tunnel create transfer
+cloudflared tunnel route dns transfer transfer.2dee.org
+#    ...then install the config and deploy/systemd/cloudflared-transfer.service.
+#    Alternative: add deploy/cloudflared/ingress-snippet.yml to an existing tunnel.
 
 # 3. Check it.
 curl -fsS https://transfer.2dee.org/api/health     # {"ok":true}
 ```
+
+**Live check after the first deploy.** Local tests can't see Cloudflare, so do this once in a browser:
+
+1. Upload a file of about 100 MB through https://transfer.2dee.org.
+2. Download it again. In DevTools → Network, the response should not show `cf-cache-status: HIT`.
+3. Check the console for CSP errors. If Rocket Loader or any other script-injecting Cloudflare feature is on for the zone, turn it off for this hostname, because the CSP (`script-src 'self'`) blocks it.
 
 Files on the host:
 
