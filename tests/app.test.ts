@@ -367,6 +367,81 @@ describe("chunked uploads", () => {
   });
 });
 
+describe("guest links", () => {
+  async function share(fileId: string) {
+    const res = await req("POST", `/api/files/${fileId}/link`);
+    expect(res.status).toBe(200);
+    return (await res.json()).guestLink as { url: string; downloads: number };
+  }
+  const tokenOf = (url: string) => url.split("/d/")[1]!;
+
+  test("a guest link downloads exactly that file without a session", async () => {
+    const ws = await newWorkspace();
+    const bytes = randomBytes(700);
+    const done = await uploadBytes(ws, bytes, "contract.pdf");
+    await uploadBytes(ws, randomBytes(50), "other.txt");
+    const link = await share(done.file.id);
+    expect(link.url).toMatch(/^https:\/\/transfer\.test\/d\/[a-z0-9]{26}$/);
+    expect((await share(done.file.id)).url).toBe(link.url); // idempotent
+
+    const t = tokenOf(link.url);
+    cookie = ""; // guest: no session at all
+    const page = await req("GET", `/d/${t}`, { auth: false });
+    expect(page.status).toBe(200);
+    expect(page.headers.get("cache-control")).toBe("no-store");
+    const meta = await (await req("GET", `/api/guest/${t}`, { auth: false })).json();
+    expect(meta).toMatchObject({ name: "contract.pdf", size: 700 });
+    expect(meta.workspaceId).toBeUndefined();
+
+    const dl = await req("GET", `/d/${t}/download`, { auth: false });
+    expect(dl.status).toBe(200);
+    expect(new Uint8Array(await dl.arrayBuffer())).toEqual(bytes);
+    expect(dl.headers.get("content-disposition")).toContain("contract.pdf");
+    expect(dl.headers.get("cache-control")).toBe("private, no-store");
+
+    // ...and nothing else: no workspace, no listing, no other files, no uploads.
+    expect((await req("GET", `/api/workspaces/${ws}`, { auth: false })).status).toBe(401);
+    expect((await req("GET", "/api/workspaces", { auth: false })).status).toBe(401);
+    expect((await req("GET", `/api/workspaces/${ws}/zip`, { auth: false })).status).toBe(401);
+    expect((await req("POST", `/api/workspaces/${ws}/uploads`, { auth: false, json: { name: "x", size: 1 } })).status).toBe(401);
+  });
+
+  test("download count, disabling, and deletion", async () => {
+    const ws = await newWorkspace();
+    const done = await uploadBytes(ws, randomBytes(20), "a.bin");
+    const t = tokenOf((await share(done.file.id)).url);
+    await req("GET", `/d/${t}/download`, { auth: false });
+    await req("GET", `/d/${t}/download`, { auth: false });
+    const files = (await (await req("GET", `/api/workspaces/${ws}`)).json()).files;
+    expect(files[0].guestLink.downloads).toBe(2);
+
+    expect((await req("DELETE", `/api/files/${done.file.id}/link`)).status).toBe(200);
+    expect((await req("GET", `/d/${t}/download`, { auth: false })).status).toBe(404);
+    expect((await req("GET", `/api/guest/${t}`, { auth: false })).status).toBe(404);
+
+    const t2 = tokenOf((await share(done.file.id)).url);
+    expect(t2).not.toBe(t); // re-sharing issues a fresh token
+    await req("DELETE", `/api/files/${done.file.id}`);
+    expect((await req("GET", `/d/${t2}/download`, { auth: false })).status).toBe(404);
+  });
+
+  test("links die with an expired or deleted workspace, and bad tokens 404", async () => {
+    const ws = await newWorkspace();
+    const done = await uploadBytes(ws, randomBytes(20), "a.bin");
+    const t = tokenOf((await share(done.file.id)).url);
+    app.sweep(Date.now() + 31 * 24 * 3600 * 1000);
+    expect((await req("GET", `/d/${t}/download`, { auth: false })).status).toBe(404);
+    expect((await req("GET", `/d/${"a".repeat(26)}/download`, { auth: false })).status).toBe(404);
+    expect((await req("GET", `/d/short/download`, { auth: false })).status).toBe(404);
+  });
+
+  test("creating a link requires a session", async () => {
+    const ws = await newWorkspace();
+    const done = await uploadBytes(ws, randomBytes(5), "a.bin");
+    expect((await req("POST", `/api/files/${done.file.id}/link`, { auth: false })).status).toBe(401);
+  });
+});
+
 describe("download all", () => {
   test("produces a valid zip whose entries match the uploads", async () => {
     const ws = await newWorkspace("Zip me");

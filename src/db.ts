@@ -34,6 +34,14 @@ export interface UploadRow {
   updated_at: number;
 }
 
+export interface ShareLinkRow {
+  token: string;
+  file_id: string;
+  created_by: string;
+  created_at: number;
+  downloads: number;
+}
+
 export function openDb(dataDir: string): Database {
   const db = new Database(join(dataDir, "transfer.db"), { create: true, strict: true });
   db.run("PRAGMA journal_mode = WAL");
@@ -68,6 +76,16 @@ export function openDb(dataDir: string): Database {
       file_id      TEXT,
       created_at   INTEGER NOT NULL,
       updated_at   INTEGER NOT NULL
+    );
+  `);
+  // Guest links: a secret token that downloads one file, nothing else.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS share_links (
+      token      TEXT PRIMARY KEY,
+      file_id    TEXT NOT NULL UNIQUE REFERENCES files(id) ON DELETE CASCADE,
+      created_by TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      downloads  INTEGER NOT NULL DEFAULT 0
     );
   `);
   // Additive migrations for databases created by older versions.
