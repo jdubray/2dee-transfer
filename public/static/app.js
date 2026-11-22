@@ -661,6 +661,7 @@ async function runUpload(item) {
         await sleep(Math.min(15000, 800 * 2 ** failures));
         try {
           const status = await api(`/api/uploads/${item.uploadId}`);
+          if (status.complete) return finish(item, status.file); // last chunk landed; its reply didn't
           offset = status.offset;
         } catch (e2) {
           if (e2.status === 404) throw e2;

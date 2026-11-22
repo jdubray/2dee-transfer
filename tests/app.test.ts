@@ -236,6 +236,31 @@ describe("chunked uploads", () => {
     expect(status.offset).toBe(300);
   });
 
+  test("a retried final chunk (lost response) reports the stored file instead of failing", async () => {
+    const ws = await newWorkspace();
+    const bytes = randomBytes(500);
+    const done = await uploadBytes(ws, bytes, "x.bin");
+    // Simulate the client never seeing that reply: it asks for status, then resends the last chunk.
+    const uploadId = (await (await req("POST", `/api/workspaces/${ws}/uploads`, { json: { name: "y", size: 10 } })).json()).uploadId;
+    const last = await req("PATCH", `/api/uploads/${uploadId}`, { body: randomBytes(10), headers: { "upload-offset": "0" } });
+    const fileId = (await last.json()).file.id;
+    const status = await (await req("GET", `/api/uploads/${uploadId}`)).json();
+    expect(status).toMatchObject({ complete: true, file: { id: fileId } });
+    const resend = await (await req("PATCH", `/api/uploads/${uploadId}`, { body: randomBytes(10), headers: { "upload-offset": "0" } })).json();
+    expect(resend).toMatchObject({ complete: true, file: { id: fileId } });
+    const files = (await (await req("GET", `/api/workspaces/${ws}`)).json()).files;
+    expect(files.map((f: any) => f.id).sort()).toEqual([done.file.id, fileId].sort());
+  });
+
+  test("concurrent inits can't overshoot the storage quota", async () => {
+    const ws = await newWorkspace();
+    const results = await Promise.all(
+      Array.from({ length: 8 }, (_, i) => req("POST", `/api/workspaces/${ws}/uploads`, { json: { name: `c${i}`, size: 1000 } })),
+    );
+    expect(results.filter((r) => r.status === 201).length).toBe(5);
+    expect(results.filter((r) => r.status === 507).length).toBe(3);
+  });
+
   test("rejects oversized chunks and chunks past the declared size", async () => {
     const ws = await newWorkspace();
     const init = await (await req("POST", `/api/workspaces/${ws}/uploads`, { json: { name: "a", size: 400 } })).json();

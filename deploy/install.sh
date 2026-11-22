@@ -40,14 +40,15 @@ if [ -n "${TRANSFER_REPO:-}" ]; then
     fi
     SSHCMD="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$KEYDIR/known_hosts"
   fi
-  if [ -d "$APP/.git" ]; then
-    sudo -u transfer -H env GIT_SSH_COMMAND="$SSHCMD" git -C "$APP" pull --ff-only
-  else
-    install -d -o transfer -g transfer "$APP"
-    sudo -u transfer -H env GIT_SSH_COMMAND="$SSHCMD" git clone "$TRANSFER_REPO" "$APP"
-  fi
+  # Works for a fresh dir, an existing checkout, or a plain copy from an earlier install.
+  install -d -o transfer -g transfer "$APP"
+  git_app() { sudo -u transfer -H env GIT_SSH_COMMAND="$SSHCMD" git -C "$APP" "$@"; }
+  [ -d "$APP/.git" ] || git_app init -q -b main
   # auto-deploy.sh fetches with plain `git`, so remember the SSH command in the repo.
-  sudo -u transfer -H git -C "$APP" config core.sshCommand "$SSHCMD"
+  git_app config core.sshCommand "$SSHCMD"
+  git_app remote get-url origin >/dev/null 2>&1 && git_app remote set-url origin "$TRANSFER_REPO" || git_app remote add origin "$TRANSFER_REPO"
+  git_app fetch --quiet origin main
+  git_app reset -q --hard origin/main
 elif [ "$SRC" != "$APP" ]; then
   install -d -o transfer -g transfer "$APP"
   cp -a "$SRC/." "$APP/"

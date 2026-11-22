@@ -86,11 +86,12 @@ export function createApp(cfg: Config): App {
       "INSERT INTO uploads (id, workspace_id, name, size, mime, uploader, received, crc32, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)",
     ),
     advanceUpload: db.query("UPDATE uploads SET received = ?, crc32 = ?, updated_at = ? WHERE id = ?"),
+    completeUpload: db.query("UPDATE uploads SET file_id = ?, received = ?, crc32 = ?, updated_at = ? WHERE id = ?"),
     deleteUpload: db.query("DELETE FROM uploads WHERE id = ?"),
     staleUploads: db.query<{ id: string }, [number]>("SELECT id FROM uploads WHERE updated_at < ?"),
     allUploadIds: db.query<{ id: string }, []>("SELECT id FROM uploads"),
     usedBytes: db.query<{ used: number }, []>(
-      "SELECT (SELECT COALESCE(SUM(size), 0) FROM files) + (SELECT COALESCE(SUM(size), 0) FROM uploads) AS used",
+      "SELECT (SELECT COALESCE(SUM(size), 0) FROM files) + (SELECT COALESCE(SUM(size), 0) FROM uploads WHERE file_id IS NULL) AS used",
     ),
   };
 
@@ -209,15 +210,28 @@ export function createApp(cfg: Config): App {
       return json({ complete: true, offset: 0, file: fileView(q.getFile.get(id)!) }, 201);
     }
 
+    // Reserve quota synchronously (before any await) so concurrent inits can't overshoot it.
     const id = newId(20);
-    await writeFile(tmpPath(id), new Uint8Array());
     q.insertUpload.run(id, workspaceId, name, size, mime, uploader, now, now);
+    try {
+      await writeFile(tmpPath(id), new Uint8Array());
+    } catch (e) {
+      q.deleteUpload.run(id);
+      throw e;
+    }
     return json({ uploadId: id, offset: 0, size, chunkBytes: cfg.chunkBytes, complete: false }, 201);
+  }
+
+  function completed(up: UploadRow): Response {
+    const file = q.getFile.get(up.file_id!);
+    if (!file) throw new HttpError(404, "That file has since been deleted");
+    return json({ offset: up.size, complete: true, file: fileView(file) });
   }
 
   async function appendChunk(req: Request, uploadId: string): Promise<Response> {
     const up = q.getUpload.get(uploadId);
     if (!up) throw new HttpError(404, "Upload not found (it may have expired or been cancelled)");
+    if (up.file_id) return completed(up); // final chunk retried after its response was lost
     if (busy.has(uploadId)) throw new HttpError(409, "Another chunk is in flight", { offset: up.received });
     busy.add(uploadId);
     try {
@@ -258,9 +272,11 @@ export function createApp(cfg: Config): App {
 
       const fileId = newId(16);
       await rename(tmpPath(uploadId), filePath(fileId));
+      // Keep the upload row (marked complete) so a client whose final response
+      // got lost can still learn the file ID instead of re-uploading.
       db.transaction(() => {
         q.insertFile.run(fileId, up.workspace_id, up.name, up.size, up.mime, crc, up.uploader, now);
-        q.deleteUpload.run(uploadId);
+        q.completeUpload.run(fileId, received, crc, now, uploadId);
       })();
       return json({ offset: received, complete: true, file: fileView(q.getFile.get(fileId)!) });
     } finally {
@@ -280,7 +296,8 @@ export function createApp(cfg: Config): App {
       path: filePath(f.id),
     }));
     const length = zipLength(entries);
-    if (length > ZIP_LIMIT_BYTES || entries.length > ZIP_LIMIT_ENTRIES) {
+    // 0xFFFF / 0xFFFFFFFF are ZIP64 sentinels, so the limits are exclusive.
+    if (length >= ZIP_LIMIT_BYTES || entries.length >= ZIP_LIMIT_ENTRIES) {
       throw new HttpError(413, "Too much to zip in one go (4 GB max) — download files individually");
     }
     return new Response(zipStream(entries), {
@@ -397,6 +414,7 @@ export function createApp(cfg: Config): App {
       if (method === "GET") {
         const up = q.getUpload.get(id);
         if (!up) throw new HttpError(404, "Upload not found");
+        if (up.file_id) return completed(up);
         return json({ offset: up.received, size: up.size, complete: false });
       }
       if (method === "DELETE") {

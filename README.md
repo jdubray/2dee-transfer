@@ -40,10 +40,10 @@ Do this on the Ubuntu host that already runs Bun and cloudflared for jj.2dee.org
 
 ```bash
 # 1. Install the app and service. It generates an access code and prints it once.
-git clone <this repo> /tmp/2dee-transfer && cd /tmp/2dee-transfer
+git clone https://github.com/jdubray/2dee-transfer.git /tmp/2dee-transfer && cd /tmp/2dee-transfer
 sudo bash deploy/install.sh
 #   or, to have it track GitHub and auto-deploy on push:
-#   sudo TRANSFER_REPO=git@github.com:jdubray/2dee-transfer.git bash deploy/install.sh
+#   sudo TRANSFER_REPO=https://github.com/jdubray/2dee-transfer.git bash deploy/install.sh
 
 #   With a git@ URL, the first run prints a deploy key. Add it to the repo as a
 #   read-only deploy key, then run the script again.

@@ -28,6 +28,8 @@ export interface UploadRow {
   uploader: string;
   received: number;
   crc32: number;
+  /** Set once the upload has completed and become a file. */
+  file_id: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -63,6 +65,7 @@ export function openDb(dataDir: string): Database {
       uploader     TEXT NOT NULL DEFAULT '',
       received     INTEGER NOT NULL DEFAULT 0,
       crc32        INTEGER NOT NULL DEFAULT 0,
+      file_id      TEXT,
       created_at   INTEGER NOT NULL,
       updated_at   INTEGER NOT NULL
     );
