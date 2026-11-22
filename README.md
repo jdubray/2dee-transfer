@@ -1,13 +1,13 @@
 # 2dee transfer
 
-A small, private file-transfer site for friends at **transfer.2dee.org**.
+A small, private file-transfer site at **transfer.2dee.org**.
 It works like WeTransfer: you get a card with a big "+", drop files in, and share a link.
 
-- **One shared access code.** No accounts. Changing the code signs everyone out.
+- **Personal access keys.** Each person has their own key, and uploads are labelled with their name. Rotating or revoking one key signs out only that person. No accounts or passwords to manage.
 - **Workspaces.** Each one is a shared folder with its own link (`/w/<id>`). You can rename it, set it to expire after 1, 7, 30 or 90 days or never, and delete it.
 - **Up to 100 MB per file.** Uploads go up in 8 MiB chunks, so they fit under Cloudflare's 100 MB request cap. A dropped connection retries and resumes where it stopped.
 - **Download** files one at a time, or **all at once as a .zip**. The zip is streamed straight from disk, with no temp copy.
-- Optional "uploading as" name per friend, drag-and-drop anywhere on the page, light and dark mode.
+- Drag-and-drop anywhere on the page, light and dark mode.
 
 Stack: Bun, `bun:sqlite`, and vanilla JS. No runtime dependencies and no build step. This is the same shape as the kizo appliance on jj.2dee.org.
 
@@ -15,7 +15,7 @@ Stack: Bun, `bun:sqlite`, and vanilla JS. No runtime dependencies and no build s
 
 ```bash
 bun install
-TRANSFER_ACCESS_CODE=letmein-dev bun run dev     # http://127.0.0.1:4180
+TRANSFER_ACCESS_KEYS=me:letmein-dev bun run dev  # http://127.0.0.1:4180
 bun test                                          # unit + API tests
 bun run e2e                                       # real server, 100 MiB round-trip, SHA-256 checked
 ```
@@ -24,7 +24,8 @@ bun run e2e                                       # real server, 100 MiB round-t
 
 | Variable | Default | |
 |---|---|---|
-| `TRANSFER_ACCESS_CODE` | — (required, ≥ 6 chars) | The code friends type. |
+| `TRANSFER_ACCESS_KEYS` | — | Personal keys: `name:key,name:key` (names: lowercase letters, digits, dashes). Manage them with `deploy/add-keys.sh`. |
+| `TRANSFER_ACCESS_CODE` | — | Optional single shared code with no name attached. At least one of the two must be set. |
 | `TRANSFER_PUBLIC_ORIGIN` | `http://host:port` | `https://…` turns on `Secure` cookies. |
 | `TRANSFER_HOST` / `TRANSFER_PORT` | `127.0.0.1` / `4180` | Keep it on loopback and expose it through cloudflared. |
 | `TRANSFER_DATA_DIR` | `./var` | Holds the SQLite DB, `files/`, `uploads/` (partial uploads) and `session.secret`. |
@@ -74,7 +75,7 @@ Files on the host:
 - unit: `2dee-transfer.service`
 - logs: `journalctl -u 2dee-transfer -f`
 
-To change the access code, edit `/etc/2dee-transfer.env` and run `sudo systemctl restart 2dee-transfer`.
+**Access keys.** Create or rotate personal keys with `sudo bash /opt/2dee-transfer/deploy/add-keys.sh jean-jacques edouard jean-pierre`. The script prints each new key once, keeps the keys of anyone you don't name, and removes the shared code. To revoke someone, delete their entry from `TRANSFER_ACCESS_KEYS` in `/etc/2dee-transfer.env` and run `sudo systemctl restart 2dee-transfer`.
 
 ### Why it's built this way
 

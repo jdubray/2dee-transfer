@@ -1,14 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import type { Config } from "../src/config.ts";
+import { parseAccessKeys, type Config } from "../src/config.ts";
 import { crc32 } from "../src/crc32.ts";
 import { cleanFileName, contentDisposition } from "../src/names.ts";
 import { makeSession, verifySession } from "../src/auth.ts";
 
 const CODE = "friends-only-123";
+const ED = "edouard-key-456";
+const JP = "jean-pierre-key-789";
 const BASE = "http://transfer.test";
 
 let dir: string;
@@ -20,7 +23,11 @@ function config(overrides: Partial<Config> = {}): Config {
     host: "127.0.0.1",
     port: 0,
     dataDir: dir,
-    accessCode: CODE,
+    accessKeys: [
+      { name: "", code: CODE },
+      { name: "edouard", code: ED },
+      { name: "jean-pierre", code: JP },
+    ],
     sessionSecret: "test-secret",
     publicOrigin: "https://transfer.test",
     maxFileBytes: 1000,
@@ -44,9 +51,9 @@ function req(method: string, path: string, opts: { json?: unknown; body?: BodyIn
   return app.fetch(new Request(BASE + path, { method, headers, body }), "1.2.3.4");
 }
 
-async function login(): Promise<string> {
+async function login(code = CODE): Promise<string> {
   const res = await app.fetch(
-    new Request(BASE + "/api/login", { method: "POST", body: JSON.stringify({ code: CODE }), headers: { "content-type": "application/json" } }),
+    new Request(BASE + "/api/login", { method: "POST", body: JSON.stringify({ code }), headers: { "content-type": "application/json" } }),
     "9.9.9.9",
   );
   expect(res.status).toBe(200);
@@ -131,13 +138,44 @@ describe("auth gate", () => {
     expect(last).toBe(429);
   }, 15000);
 
-  test("sessions are invalidated when the access code changes", () => {
-    const token = makeSession("s", "code-one", 60);
-    expect(verifySession(token, "s", "code-one")).toBe(true);
-    expect(verifySession(token, "s", "code-two")).toBe(false);
-    expect(verifySession(token, "other", "code-one")).toBe(false);
-    expect(verifySession(token.slice(0, -2) + "xx", "s", "code-one")).toBe(false);
-    expect(verifySession(makeSession("s", "code-one", 60, Date.now() - 120_000), "s", "code-one")).toBe(false);
+  test("rotating one person's key signs out only that person", () => {
+    const a = { name: "edouard", code: "code-one" };
+    const b = { name: "jean-pierre", code: "code-two" };
+    const token = makeSession("s", a, 60);
+    expect(verifySession(token, "s", [a, b])).toEqual(a);
+    expect(verifySession(token, "s", [{ name: "edouard", code: "rotated" }, b])).toBeNull();
+    expect(verifySession(token, "s", [b])).toBeNull();
+    expect(verifySession(makeSession("s", b, 60), "s", [{ name: "edouard", code: "rotated" }, b])).toEqual(b);
+    expect(verifySession(token, "other", [a, b])).toBeNull();
+    expect(verifySession(token.slice(0, -2) + "xx", "s", [a, b])).toBeNull();
+    // Swapping the name in a token must not let it pass as someone else.
+    expect(verifySession(token.replace("edouard", "jean-pierre"), "s", [a, b])).toBeNull();
+    expect(verifySession(makeSession("s", a, 60, Date.now() - 120_000), "s", [a, b])).toBeNull();
+  });
+
+  test("named keys identify the person and label their uploads", async () => {
+    cookie = await login(ED);
+    const session = await (await req("GET", "/api/session")).json();
+    expect(session).toMatchObject({ authenticated: true, user: "Edouard" });
+    const ws = await newWorkspace();
+    const done = await uploadBytes(ws, randomBytes(10), "a.txt");
+    expect(done.file.uploader).toBe("Edouard");
+    cookie = await login(JP);
+    const init = await (await req("POST", `/api/workspaces/${ws}/uploads`, { json: { name: "b", size: 0, uploader: "Someone Else" } })).json();
+    expect(init.file.uploader).toBe("Jean-Pierre");
+  });
+
+  test("access key parsing", () => {
+    expect(parseAccessKeys("Jean-Jacques:aaaa-bbbb, edouard:cccc-dddd", undefined)).toEqual([
+      { name: "jean-jacques", code: "aaaa-bbbb" },
+      { name: "edouard", code: "cccc-dddd" },
+    ]);
+    expect(parseAccessKeys(undefined, "shared-code")).toEqual([{ name: "", code: "shared-code" }]);
+    expect(() => parseAccessKeys(undefined, undefined)).toThrow();
+    expect(() => parseAccessKeys("a:123456,a:654321", undefined)).toThrow();
+    expect(() => parseAccessKeys("a:123456,b:123456", undefined)).toThrow();
+    expect(() => parseAccessKeys("a:short", undefined)).toThrow();
+    expect(() => parseAccessKeys("no-colon-here", undefined)).toThrow();
   });
 
   test("cross-origin writes are refused", async () => {
@@ -250,6 +288,29 @@ describe("chunked uploads", () => {
     expect(resend).toMatchObject({ complete: true, file: { id: fileId } });
     const files = (await (await req("GET", `/api/workspaces/${ws}`)).json()).files;
     expect(files.map((f: any) => f.id).sort()).toEqual([done.file.id, fileId].sort());
+  });
+
+  test("cancelling after the final chunk landed removes the stored file", async () => {
+    const ws = await newWorkspace();
+    const uploadId = (await (await req("POST", `/api/workspaces/${ws}/uploads`, { json: { name: "z", size: 10 } })).json()).uploadId;
+    await req("PATCH", `/api/uploads/${uploadId}`, { body: randomBytes(10), headers: { "upload-offset": "0" } });
+    expect((await req("DELETE", `/api/uploads/${uploadId}`)).status).toBe(200);
+    expect((await (await req("GET", `/api/workspaces/${ws}`)).json()).files).toEqual([]);
+    expect(readdirSync(join(dir, "files")).length).toBe(0);
+  });
+
+  test("databases from before uploads.file_id are migrated", () => {
+    app.close();
+    const old = mkdtempSync(join(tmpdir(), "transfer-old-"));
+    const db = new Database(join(old, "transfer.db"));
+    db.run(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER);
+      CREATE TABLE uploads (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT NOT NULL, size INTEGER NOT NULL,
+        mime TEXT NOT NULL, uploader TEXT NOT NULL DEFAULT '', received INTEGER NOT NULL DEFAULT 0,
+        crc32 INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);`);
+    db.close();
+    app = createApp(config({ dataDir: old }));
+    const cols = new Database(join(old, "transfer.db")).query<{ name: string }, []>("PRAGMA table_info(uploads)").all();
+    expect(cols.map((c) => c.name)).toContain("file_id");
   });
 
   test("concurrent inits can't overshoot the storage quota", async () => {

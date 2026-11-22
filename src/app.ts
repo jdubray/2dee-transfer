@@ -3,7 +3,16 @@ import { open, rename, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type { Config } from "./config.ts";
 import { openDb, type FileRow, type UploadRow, type WorkspaceRow } from "./db.ts";
-import { COOKIE, RateLimiter, checkAccessCode, makeSession, readCookie, verifySession } from "./auth.ts";
+import {
+  COOKIE,
+  RateLimiter,
+  displayName,
+  findAccessKey,
+  makeSession,
+  readCookie,
+  verifySession,
+  type AccessKey,
+} from "./auth.ts";
 import { crc32 } from "./crc32.ts";
 import { cleanFileName, cleanLabel, cleanMime, contentDisposition, newId } from "./names.ts";
 import { ZIP_LIMIT_BYTES, ZIP_LIMIT_ENTRIES, uniqueNames, zipLength, zipStream } from "./zip.ts";
@@ -189,7 +198,7 @@ export function createApp(cfg: Config): App {
 
   // ---- route handlers -------------------------------------------------------
 
-  async function createUpload(req: Request, workspaceId: string): Promise<Response> {
+  async function createUpload(req: Request, workspaceId: string, who: AccessKey): Promise<Response> {
     liveWorkspace(workspaceId);
     const b = await body(req);
     const size = Number(b.size);
@@ -200,7 +209,8 @@ export function createApp(cfg: Config): App {
     checkQuota(size);
     const name = cleanFileName(b.name);
     const mime = cleanMime(b.type);
-    const uploader = cleanLabel(b.uploader, 40);
+    // Named keys know who is uploading; only the legacy shared code relies on a typed name.
+    const uploader = who.name ? displayName(who.name) : cleanLabel(b.uploader, 40);
     const now = Date.now();
 
     if (size === 0) {
@@ -274,10 +284,18 @@ export function createApp(cfg: Config): App {
       await rename(tmpPath(uploadId), filePath(fileId));
       // Keep the upload row (marked complete) so a client whose final response
       // got lost can still learn the file ID instead of re-uploading.
-      db.transaction(() => {
+      // Re-check inside the transaction: the upload (or its whole workspace)
+      // may have been deleted while the rename was in flight.
+      const stored = db.transaction(() => {
+        if (!q.getUpload.get(uploadId)) return false;
         q.insertFile.run(fileId, up.workspace_id, up.name, up.size, up.mime, crc, up.uploader, now);
         q.completeUpload.run(fileId, received, crc, now, uploadId);
+        return true;
       })();
+      if (!stored) {
+        rmSync(filePath(fileId), { force: true });
+        throw new HttpError(404, "Upload was cancelled");
+      }
       return json({ offset: received, complete: true, file: fileView(q.getFile.get(fileId)!) });
     } finally {
       busy.delete(uploadId);
@@ -336,20 +354,26 @@ export function createApp(cfg: Config): App {
       }
     }
 
-    const authed = verifySession(readCookie(req, COOKIE), cfg.sessionSecret, cfg.accessCode);
+    const who = verifySession(readCookie(req, COOKIE), cfg.sessionSecret, cfg.accessKeys);
 
     if (path === "/api/session" && method === "GET") {
-      return json({ authenticated: authed, maxFileBytes: cfg.maxFileBytes, chunkBytes: cfg.chunkBytes });
+      return json({
+        authenticated: !!who,
+        user: who?.name ? displayName(who.name) : null,
+        maxFileBytes: cfg.maxFileBytes,
+        chunkBytes: cfg.chunkBytes,
+      });
     }
     if (path === "/api/login" && method === "POST") {
-      if (!loginLimiter.take(clientIp)) throw new HttpError(429, "Too many attempts — try again in 15 minutes");
+      if (!loginLimiter.take(clientIp)) throw new HttpError(429, "Too many attempts. Please try again in 15 minutes.");
       const b = await body(req);
-      if (!checkAccessCode(String(b.code ?? ""), cfg.accessCode)) {
+      const key = findAccessKey(String(b.code ?? ""), cfg.accessKeys);
+      if (!key) {
         await Bun.sleep(400);
-        throw new HttpError(401, "That access code isn't right");
+        throw new HttpError(401, "This access key is not valid.");
       }
       loginLimiter.clear(clientIp);
-      const token = makeSession(cfg.sessionSecret, cfg.accessCode, cfg.sessionTtlSeconds);
+      const token = makeSession(cfg.sessionSecret, key, cfg.sessionTtlSeconds);
       return json({ ok: true }, 200, { "Set-Cookie": sessionCookie(token, cfg.sessionTtlSeconds) });
     }
     if (path === "/api/logout" && method === "POST") {
@@ -357,7 +381,7 @@ export function createApp(cfg: Config): App {
     }
 
     if (!path.startsWith("/api/")) return json({ error: "Not found" }, 404);
-    if (!authed) throw new HttpError(401, "Enter the access code first");
+    if (!who) throw new HttpError(401, "Please sign in with your access key.");
 
     // Authenticated API.
     if (path === "/api/workspaces") {
@@ -406,7 +430,7 @@ export function createApp(cfg: Config): App {
       return downloadAll(liveWorkspace(m[1]!));
     }
     if ((m = path.match(/^\/api\/workspaces\/([a-z0-9]+)\/uploads$/)) && method === "POST") {
-      return createUpload(req, m[1]!);
+      return createUpload(req, m[1]!, who);
     }
     if ((m = path.match(/^\/api\/uploads\/([a-z0-9]+)$/))) {
       const id = m[1]!;
@@ -418,7 +442,15 @@ export function createApp(cfg: Config): App {
         return json({ offset: up.received, size: up.size, complete: false });
       }
       if (method === "DELETE") {
-        if (q.getUpload.get(id)) removeUpload(id);
+        const up = q.getUpload.get(id);
+        if (up) {
+          removeUpload(id);
+          // Cancel raced the final chunk: the file already landed, so honour the cancel.
+          if (up.file_id) {
+            q.deleteFile.run(up.file_id);
+            rmSync(filePath(up.file_id), { force: true });
+          }
+        }
         return json({ ok: true });
       }
     }
