@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="color-scheme" content="light dark" />
+    <title>2dee transfer</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/app.css" />
+    <script type="module" src="/static/app.js"></script>
+  </head>
+  <body>
+    <div class="backdrop" aria-hidden="true">
+      <div class="orb orb-a"></div>
+      <div class="orb orb-b"></div>
+      <div class="orb orb-c"></div>
+      <div class="grain"></div>
+    </div>
+
+    <header class="topbar">
+      <a class="brand" href="/" data-link>
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>2dee <b>transfer</b></span>
+      </a>
+      <button class="ghost" id="logout" type="button" hidden>Sign out</button>
+    </header>
+
+    <main class="stage">
+      <section class="card" id="card" aria-live="polite">
+        <div class="loading">Loading…</div>
+      </section>
+
+      <aside class="hero" aria-hidden="true">
+        <p class="hero-kicker">just for us</p>
+        <h1>Big files,<br />small circle.</h1>
+        <p class="hero-sub">Drop it in a workspace, send the link, done.</p>
+      </aside>
+    </main>
+
+    <div class="dropveil" id="dropveil" hidden>
+      <div class="dropveil-inner">
+        <div class="plus big" aria-hidden="true"></div>
+        <p>Drop to add to <b id="dropveil-name">this workspace</b></p>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" role="status" hidden></div>
+  </body>
+</html>

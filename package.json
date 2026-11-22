@@ -1,0 +1,18 @@
+{
+  "name": "2dee-transfer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Private file transfer for friends — workspaces, access code, 100 MB per file",
+  "scripts": {
+    "dev": "bun run src/main.ts",
+    "start": "bun run src/main.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "e2e": "bun run scripts/e2e.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.5.0"
+  }
+}
