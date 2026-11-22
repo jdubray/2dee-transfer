@@ -49,10 +49,11 @@ sudo bash deploy/install.sh
 #   read-only deploy key, then run the script again.
 
 # 2. Give it its own Cloudflare tunnel. This is the same pattern as jj.2dee.org.
-#    The full steps are at the top of deploy/cloudflared/config.yml.example:
-cloudflared tunnel create transfer
-cloudflared tunnel route dns transfer transfer.2dee.org
-#    ...then install the config and deploy/systemd/cloudflared-transfer.service.
+#    The first two commands run as your own user. Use --config /dev/null: without it,
+#    a `tunnel:` line in ~/.cloudflared/config.yml silently wins.
+cloudflared tunnel create 2dee-transfer                       # prints <UUID>
+cloudflared --config /dev/null tunnel route dns --overwrite-dns <UUID> transfer.2dee.org
+sudo bash deploy/setup-tunnel.sh <UUID> ~/.cloudflared/<UUID>.json
 #    Alternative: add deploy/cloudflared/ingress-snippet.yml to an existing tunnel.
 
 # 3. Check it.
