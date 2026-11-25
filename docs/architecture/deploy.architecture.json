@@ -1,0 +1,189 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "How a code change reaches production",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/jdubray/2dee-transfer",
+      "revision": "85b3974072f986ec7436d12d8a41e797f74ab349"
+    },
+    "views": [
+      {
+        "id": "host",
+        "label": "Ubuntu host glm",
+        "focus": [
+          "server",
+          "config",
+          "autodeploy"
+        ],
+        "note": "Nothing here listens on a public interface; the only way in is the outbound Cloudflare tunnel or SSH on the LAN"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "github",
+      "type": "external",
+      "label": "GitHub repo",
+      "pos": [
+        380,
+        234
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "jdubray/2dee-transfer"
+    },
+    {
+      "id": "autodeploy",
+      "type": "backend",
+      "label": "Auto-deploy timer",
+      "pos": [
+        60,
+        48
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "polls main every 60 s",
+      "sources": [
+        {
+          "path": "deploy/auto-deploy.sh"
+        },
+        {
+          "path": "deploy/systemd/2dee-transfer-autodeploy.timer"
+        }
+      ]
+    },
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "HTTP server + router",
+      "pos": [
+        380,
+        48
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "Bun.serve, route()",
+      "sources": [
+        {
+          "path": "src/main.ts",
+          "line": 17,
+          "end_line": 33,
+          "label": "Bun.serve, 9 MiB body cap"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 377,
+          "label": "route(): public vs. key-holder routes"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 25,
+          "label": "security headers / CSP"
+        }
+      ]
+    },
+    {
+      "id": "config",
+      "type": "database",
+      "label": "Env file",
+      "pos": [
+        700,
+        48
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "/etc/2dee-transfer.env",
+      "sources": [
+        {
+          "path": "deploy/2dee-transfer.env.example"
+        },
+        {
+          "path": "src/config.ts",
+          "line": 76
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Ubuntu host glm",
+      "wraps": [
+        "server",
+        "config",
+        "autodeploy"
+      ],
+      "pad": 20
+    }
+  ],
+  "connections": [
+    {
+      "id": "server--config",
+      "from": "server",
+      "to": "config",
+      "label": "read at startup · file",
+      "labelAt": [
+        615,
+        63
+      ]
+    },
+    {
+      "id": "autodeploy--github",
+      "from": "autodeploy",
+      "to": "github",
+      "label": "poll origin/main · HTTPS",
+      "labelAt": [
+        295,
+        63
+      ],
+      "variant": "security"
+    },
+    {
+      "id": "autodeploy--server",
+      "from": "autodeploy",
+      "to": "server",
+      "label": "reset --hard, restart · signal",
+      "labelAt": [
+        384,
+        124
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The short answer",
+      "items": [
+        "Merging to main is deploying",
+        "Within a minute the host's timer fetches origin/main, resets the checkout to it and restarts the service",
+        "on startup the server re-reads the env file and applies any additive schema changes"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Not shown here",
+      "items": [
+        "Visitor traffic and the tunnel, which a deploy leaves running",
+        "Connected but out of scope: cloudflared tunnel, Access keys, Chunked uploads, Guest links, Zip streamer, SQLite"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Doctrine",
+      "items": [
+        "Production changes only by merging to main: the host polls GitHub and resets to origin/main; nothing outside can push into it, and a bad merge is undone by reverting on main",
+        "Schema changes are additive and run at startup: openDb uses CREATE TABLE IF NOT EXISTS plus guarded ALTER TABLE ADD COLUMN, so an auto-deployed restart migrates the live database without a separate step"
+      ]
+    }
+  ]
+}

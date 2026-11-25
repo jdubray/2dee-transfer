@@ -1,0 +1,2 @@
+# Render-time screenshots and checks from archlens; regenerate with `archlens render`.
+*.visual-check.*

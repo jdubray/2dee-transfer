@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "How 'Download all' streams a workspace",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/jdubray/2dee-transfer",
+      "revision": "85b3974072f986ec7436d12d8a41e797f74ab349"
+    },
+    "views": [
+      {
+        "id": "bun-process",
+        "label": "One Bun process",
+        "focus": [
+          "server",
+          "zip"
+        ],
+        "note": "Shares in-memory state (in-flight upload set, login rate limiter), so exactly one instance may run"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "HTTP server + router",
+      "pos": [
+        60,
+        111
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "Bun.serve, route()",
+      "sources": [
+        {
+          "path": "src/main.ts",
+          "line": 17,
+          "end_line": 33,
+          "label": "Bun.serve, 9 MiB body cap"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 377,
+          "label": "route(): public vs. key-holder routes"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 25,
+          "label": "security headers / CSP"
+        }
+      ]
+    },
+    {
+      "id": "zip",
+      "type": "backend",
+      "label": "Zip streamer",
+      "pos": [
+        380,
+        48
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "store-only, no temp file",
+      "sources": [
+        {
+          "path": "src/zip.ts",
+          "line": 105
+        },
+        {
+          "path": "src/app.ts",
+          "line": 352,
+          "label": "downloadAll"
+        }
+      ]
+    },
+    {
+      "id": "sqlite",
+      "type": "database",
+      "label": "SQLite",
+      "pos": [
+        380,
+        174
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "transfer.db (WAL)",
+      "sources": [
+        {
+          "path": "src/db.ts",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "id": "filestore",
+      "type": "database",
+      "label": "File bytes on disk",
+      "pos": [
+        700,
+        111
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "files/, uploads/",
+      "sources": [
+        {
+          "path": "src/app.ts",
+          "line": 64,
+          "end_line": 67
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "One Bun process",
+      "wraps": [
+        "server",
+        "zip"
+      ],
+      "pad": 20
+    },
+    {
+      "kind": "region",
+      "label": "Ubuntu host glm",
+      "wraps": [
+        "server",
+        "zip",
+        "sqlite",
+        "filestore"
+      ],
+      "pad": 20
+    }
+  ],
+  "connections": [
+    {
+      "id": "server--zip",
+      "from": "server",
+      "to": "zip",
+      "label": "download all",
+      "labelAt": [
+        295,
+        63
+      ]
+    },
+    {
+      "id": "server--sqlite",
+      "from": "server",
+      "to": "sqlite",
+      "label": "workspace CRUD · SQL",
+      "labelAt": [
+        360,
+        126
+      ]
+    },
+    {
+      "id": "zip--filestore",
+      "from": "zip",
+      "to": "filestore",
+      "label": "read each file in turn · file",
+      "labelAt": [
+        615,
+        63
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The short answer",
+      "items": [
+        "The router reads the workspace's file list from SQLite, including each file's size and the CRC-32 computed during upload, and hands it to the Zip streamer, which writes zip headers and streams each file's bytes straight from the file store",
+        "Nothing is written to disk and no file is read twice"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Not shown here",
+      "items": [
+        "Compression: the zip is store-only, since most shared files (photos, video, PDFs) are already compressed",
+        "Connected but out of scope: cloudflared tunnel, Access keys, Chunked uploads, Guest links, Expiry sweeper, Env file"
+      ]
+    }
+  ]
+}

@@ -398,6 +398,7 @@ describe("guest links", () => {
     expect(new Uint8Array(await dl.arrayBuffer())).toEqual(bytes);
     expect(dl.headers.get("content-disposition")).toContain("contract.pdf");
     expect(dl.headers.get("cache-control")).toBe("private, no-store");
+    expect(dl.headers.get("content-type")).toBe("application/octet-stream"); // never the uploader's MIME
 
     // ...and nothing else: no workspace, no listing, no other files, no uploads.
     expect((await req("GET", `/api/workspaces/${ws}`, { auth: false })).status).toBe(401);

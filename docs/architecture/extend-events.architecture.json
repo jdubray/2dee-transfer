@@ -1,0 +1,251 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Where notifications and previews would plug in",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/jdubray/2dee-transfer",
+      "revision": "85b3974072f986ec7436d12d8a41e797f74ab349"
+    },
+    "views": [
+      {
+        "id": "answer",
+        "label": "Where notifications and previews would plug in",
+        "focus": [
+          "notifier",
+          "previewer"
+        ],
+        "note": "Proposal: emit an event after the upload transaction and after a guest download commit; a notifier turns those into emails through a provid…"
+      },
+      {
+        "id": "bun-process",
+        "label": "One Bun process",
+        "focus": [
+          "uploads",
+          "guest-links"
+        ],
+        "note": "Shares in-memory state (in-flight upload set, login rate limiter), so exactly one instance may run"
+      },
+      {
+        "id": "host",
+        "label": "Ubuntu host glm",
+        "focus": [
+          "uploads",
+          "guest-links"
+        ],
+        "note": "Nothing here listens on a public interface; the only way in is the outbound Cloudflare tunnel or SSH on the LAN"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "guest-links",
+      "type": "backend",
+      "label": "Guest links",
+      "pos": [
+        60,
+        48
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "1 token =",
+      "sources": [
+        {
+          "path": "src/app.ts",
+          "line": 183,
+          "label": "guestFile"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 391,
+          "label": "public /d and /api/guest routes"
+        }
+      ]
+    },
+    {
+      "id": "uploads",
+      "type": "backend",
+      "label": "Chunked uploads",
+      "pos": [
+        342,
+        48
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "offset-checked",
+      "sources": [
+        {
+          "path": "src/app.ts",
+          "line": 248,
+          "label": "createUpload"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 288,
+          "label": "appendChunk"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 227,
+          "label": "checkQuota"
+        }
+      ]
+    },
+    {
+      "id": "notifier",
+      "type": "backend",
+      "label": "Notifier",
+      "pos": [
+        624,
+        234
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "proposed",
+      "tag": "planned"
+    },
+    {
+      "id": "previewer",
+      "type": "backend",
+      "label": "Preview worker",
+      "pos": [
+        906,
+        234
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "proposed",
+      "tag": "planned"
+    },
+    {
+      "id": "mail",
+      "type": "external",
+      "label": "Email provider",
+      "pos": [
+        1188,
+        234
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "proposed (e.g. SES)",
+      "tag": "planned"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "One Bun process",
+      "wraps": [
+        "uploads",
+        "guest-links"
+      ],
+      "pad": 20
+    },
+    {
+      "kind": "region",
+      "label": "Ubuntu host glm",
+      "wraps": [
+        "uploads",
+        "guest-links"
+      ],
+      "pad": 20
+    }
+  ],
+  "connections": [
+    {
+      "id": "uploads--notifier",
+      "from": "uploads",
+      "to": "notifier",
+      "label": "file stored · event",
+      "labelAt": [
+        549,
+        63
+      ],
+      "variant": "dashed"
+    },
+    {
+      "id": "guest-links--notifier",
+      "from": "guest-links",
+      "to": "notifier",
+      "label": "guest downloaded · event",
+      "labelAt": [
+        267,
+        124
+      ],
+      "variant": "dashed"
+    },
+    {
+      "id": "notifier--mail",
+      "from": "notifier",
+      "to": "mail",
+      "label": "send email · HTTPS",
+      "labelAt": [
+        981,
+        340
+      ],
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [
+          699,
+          340
+        ],
+        [
+          1263,
+          340
+        ]
+      ]
+    },
+    {
+      "id": "uploads--previewer",
+      "from": "uploads",
+      "to": "previewer",
+      "label": "render a thumbnail · event",
+      "labelAt": [
+        716,
+        131
+      ],
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The short answer",
+      "items": [
+        "Proposal: emit an event after the upload transaction and after a guest download commit",
+        "a notifier turns those into emails through a provider, and a preview worker renders thumbnails into the file store",
+        "Neither is ever on the request path"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Not shown here",
+      "items": [
+        "SQLite and the file store (each event fires after a commit there",
+        "the preview worker writes its thumbnail into the file store), the router and browsers, and per-workspace access, which has its own question",
+        "Connected but out of scope: HTTP server + router, SQLite, File bytes on disk"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Constraints",
+      "items": [
+        "Proposed: side effects (email, previews) fire after the database commit and never inside the request's critical path: an upload or guest download must not fail or slow down because an email provider is slow; this is the rule new features should follow",
+        "Run exactly one server process: the in-flight upload set and the login rate limiter live in memory; two instances would each believe they own an upload"
+      ]
+    }
+  ]
+}
