@@ -90,6 +90,9 @@ export function createApp(cfg: Config): App {
     deleteFile: db.query("DELETE FROM files WHERE id = ?"),
     allFileIds: db.query<{ id: string }, []>("SELECT id FROM files"),
     linkForFile: db.query<ShareLinkRow, [string]>("SELECT * FROM share_links WHERE file_id = ?"),
+    linksIn: db.query<ShareLinkRow, [string]>(
+      "SELECT l.* FROM share_links l JOIN files f ON f.id = l.file_id WHERE f.workspace_id = ?",
+    ),
     getLink: db.query<ShareLinkRow, [string]>("SELECT * FROM share_links WHERE token = ?"),
     insertLink: db.query("INSERT INTO share_links (token, file_id, created_by, created_at) VALUES (?, ?, ?, ?)"),
     deleteLinkForFile: db.query("DELETE FROM share_links WHERE file_id = ?"),
@@ -162,8 +165,9 @@ export function createApp(cfg: Config): App {
     downloads: l.downloads,
   });
 
-  const fileView = (f: FileRow) => {
-    const link = q.linkForFile.get(f.id);
+  /** Pass `links` when listing many files, so it's one query rather than one per file. */
+  const fileView = (f: FileRow, links?: Map<string, ShareLinkRow>) => {
+    const link = links ? links.get(f.id) : q.linkForFile.get(f.id);
     return {
       id: f.id,
       name: f.name,
@@ -191,10 +195,11 @@ export function createApp(cfg: Config): App {
     return { link, file, ws };
   }
 
-  function fileDownload(f: FileRow): Response {
+  /** Guests always get opaque bytes: the uploader-supplied MIME type is only echoed to key holders. */
+  function fileDownload(f: FileRow, guest = false): Response {
     return new Response(Bun.file(filePath(f.id)), {
       headers: {
-        "Content-Type": f.mime,
+        "Content-Type": guest ? "application/octet-stream" : f.mime,
         "Content-Length": String(f.size),
         "Content-Disposition": contentDisposition(f.name),
       },
@@ -401,7 +406,7 @@ export function createApp(cfg: Config): App {
     if (method === "GET" && (g = path.match(/^\/d\/([a-z0-9]{26})\/download$/))) {
       const { link, file } = guestFile(g[1]!);
       q.countDownload.run(link.token);
-      return fileDownload(file);
+      return fileDownload(file, true);
     }
 
     if (method !== "GET" && method !== "HEAD") {
@@ -474,7 +479,8 @@ export function createApp(cfg: Config): App {
     if ((m = path.match(/^\/api\/workspaces\/([a-z0-9]+)$/))) {
       const ws = liveWorkspace(m[1]!);
       if (method === "GET") {
-        return json({ workspace: workspaceView(ws), files: q.filesIn.all(ws.id).map(fileView) });
+        const links = new Map(q.linksIn.all(ws.id).map((l) => [l.file_id, l]));
+        return json({ workspace: workspaceView(ws), files: q.filesIn.all(ws.id).map((f) => fileView(f, links)) });
       }
       if (method === "PATCH") {
         const b = await body(req);
