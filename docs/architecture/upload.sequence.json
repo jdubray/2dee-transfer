@@ -1,0 +1,228 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "What happens when someone uploads a 100 MB file",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1845,
+      782
+    ],
+    "column_fit": "spread",
+    "legend": {
+      "entries": {
+        "emphasis": {
+          "label": "the answer’s path"
+        },
+        "return": {
+          "label": "reply"
+        },
+        "dashed": {
+          "label": "async or planned"
+        },
+        "security": {
+          "label": "crosses a boundary"
+        },
+        "default": {
+          "label": "message"
+        }
+      }
+    },
+    "views": [
+      {
+        "id": "bun-process",
+        "label": "One Bun process",
+        "focus": [
+          "server",
+          "uploads"
+        ],
+        "note": "Shares in-memory state (in-flight upload set, login rate limiter), so exactly one instance may run"
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "HTTP server + router"
+    },
+    {
+      "id": "uploads",
+      "type": "backend",
+      "label": "Chunked uploads"
+    },
+    {
+      "id": "sqlite",
+      "type": "database",
+      "label": "SQLite"
+    },
+    {
+      "id": "filestore",
+      "type": "database",
+      "label": "File bytes on disk"
+    }
+  ],
+  "segments": [
+    {
+      "from": 170,
+      "to": 330,
+      "label": "Start"
+    },
+    {
+      "from": 356,
+      "to": 516,
+      "label": "Each 8 MiB chunk"
+    },
+    {
+      "from": 542,
+      "to": 702,
+      "label": "Finish"
+    }
+  ],
+  "messages": [
+    {
+      "id": "s1",
+      "from": "server",
+      "to": "uploads",
+      "y": 190,
+      "label": "createUpload(name, size, who)",
+      "note": "Arrives as POST /api/workspaces/:id/uploads from the browser, via Cloudflare and the tunnel; 'who' is the signed-in key holder, never a name the browser claims."
+    },
+    {
+      "id": "s2",
+      "from": "uploads",
+      "to": "sqlite",
+      "y": 230,
+      "label": "check quota, insert upload row",
+      "note": "Inserted synchronously, before any await, so two simultaneous uploads cannot both pass the quota check."
+    },
+    {
+      "id": "s3",
+      "from": "uploads",
+      "to": "filestore",
+      "y": 270,
+      "label": "create empty uploads/<id> · file"
+    },
+    {
+      "id": "s4",
+      "from": "uploads",
+      "to": "server",
+      "y": 310,
+      "label": "201 {uploadId, chunkBytes}",
+      "variant": "return"
+    },
+    {
+      "id": "s5",
+      "from": "server",
+      "to": "uploads",
+      "y": 376,
+      "label": "appendChunk(offset n, ≤8 MiB)",
+      "note": "A PATCH with an Upload-Offset header. 409 with the server's offset if n is not what it expects; the browser resumes from there."
+    },
+    {
+      "id": "s6",
+      "from": "uploads",
+      "to": "filestore",
+      "y": 416,
+      "label": "write bytes at offset n · file"
+    },
+    {
+      "id": "s7",
+      "from": "uploads",
+      "to": "sqlite",
+      "y": 456,
+      "label": "received += len, update CRC · SQL"
+    },
+    {
+      "id": "s8",
+      "from": "uploads",
+      "to": "server",
+      "y": 496,
+      "label": "200 {offset}",
+      "variant": "return"
+    },
+    {
+      "id": "s9",
+      "from": "server",
+      "to": "uploads",
+      "y": 562,
+      "label": "appendChunk(last chunk)"
+    },
+    {
+      "id": "s10",
+      "from": "uploads",
+      "to": "filestore",
+      "y": 602,
+      "label": "rename to files/<fileId> · file"
+    },
+    {
+      "id": "s11",
+      "from": "uploads",
+      "to": "sqlite",
+      "y": 642,
+      "label": "insert file, mark upload done",
+      "note": "One transaction, which first re-checks that the upload still exists, so a workspace deleted mid-rename cannot leave an orphan row."
+    },
+    {
+      "id": "s12",
+      "from": "uploads",
+      "to": "server",
+      "y": 682,
+      "label": "200 {complete, file}",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "server",
+      "from": 185,
+      "to": 688,
+      "type": "backend"
+    },
+    {
+      "participant": "uploads",
+      "from": 185,
+      "to": 688,
+      "type": "backend"
+    },
+    {
+      "participant": "sqlite",
+      "from": 225,
+      "to": 648,
+      "type": "database"
+    },
+    {
+      "participant": "filestore",
+      "from": 265,
+      "to": 608,
+      "type": "database"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The short answer",
+      "items": [
+        "The browser never sends the file in one request",
+        "It asks the server for an upload id, then sends 8 MiB chunks, each stamped with the byte offset it starts at",
+        "the server writes each chunk at that offset and records progress, and on the last byte renames the temp file into place and records the file in one transaction"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Not shown here",
+      "items": [
+        "The browser, Cloudflare and the tunnel, which carry every step's request the same way (see the overview)",
+        "browser-side retries with backoff",
+        "the cancel path"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Constraints",
+      "items": [
+        "No request body may exceed 100 MB, so files travel in 8 MiB chunks: Cloudflare's free and pro plans reject larger bodies with a 413; the server caps bodies at chunk size + 1 MiB to match"
+      ]
+    }
+  ]
+}

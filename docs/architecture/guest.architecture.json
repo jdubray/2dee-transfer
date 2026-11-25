@@ -1,0 +1,282 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "How a guest link opens one file and nothing else",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/jdubray/2dee-transfer",
+      "revision": "85b3974072f986ec7436d12d8a41e797f74ab349"
+    },
+    "views": [
+      {
+        "id": "answer",
+        "label": "How a guest link opens one file and nothing else",
+        "focus": [
+          "guest-links",
+          "auth"
+        ],
+        "note": "A key holder's click creates a random 26-character token tied to one file id. The guest page and its download go through three public route…"
+      },
+      {
+        "id": "bun-process",
+        "label": "One Bun process",
+        "focus": [
+          "server",
+          "auth",
+          "guest-links"
+        ],
+        "note": "Shares in-memory state (in-flight upload set, login rate limiter), so exactly one instance may run"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "HTTP server + router",
+      "pos": [
+        60,
+        111
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "Bun.serve, route()",
+      "sources": [
+        {
+          "path": "src/main.ts",
+          "line": 17,
+          "end_line": 33,
+          "label": "Bun.serve, 9 MiB body cap"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 377,
+          "label": "route(): public vs. key-holder routes"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 25,
+          "label": "security headers / CSP"
+        }
+      ]
+    },
+    {
+      "id": "auth",
+      "type": "security",
+      "label": "Access keys",
+      "pos": [
+        380,
+        48
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "HMAC session cookie",
+      "sources": [
+        {
+          "path": "src/auth.ts",
+          "line": 28,
+          "end_line": 61
+        },
+        {
+          "path": "src/config.ts",
+          "line": 49,
+          "label": "parseAccessKeys"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 425,
+          "end_line": 452,
+          "label": "login + the 401 gate"
+        }
+      ]
+    },
+    {
+      "id": "guest-links",
+      "type": "backend",
+      "label": "Guest links",
+      "pos": [
+        380,
+        174
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "1 token = 1 file",
+      "sources": [
+        {
+          "path": "src/app.ts",
+          "line": 183,
+          "label": "guestFile"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 391,
+          "label": "public /d and /api/guest routes"
+        }
+      ]
+    },
+    {
+      "id": "sqlite",
+      "type": "database",
+      "label": "SQLite",
+      "pos": [
+        700,
+        48
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "transfer.db (WAL)",
+      "sources": [
+        {
+          "path": "src/db.ts",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "id": "filestore",
+      "type": "database",
+      "label": "File bytes on disk",
+      "pos": [
+        700,
+        174
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "files/, uploads/",
+      "sources": [
+        {
+          "path": "src/app.ts",
+          "line": 64,
+          "end_line": 67
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "One Bun process",
+      "wraps": [
+        "server",
+        "auth",
+        "guest-links"
+      ],
+      "pad": 20
+    },
+    {
+      "kind": "region",
+      "label": "Ubuntu host glm",
+      "wraps": [
+        "server",
+        "auth",
+        "guest-links",
+        "sqlite",
+        "filestore"
+      ],
+      "pad": 20
+    }
+  ],
+  "connections": [
+    {
+      "id": "server--auth",
+      "from": "server",
+      "to": "auth",
+      "label": "check session",
+      "labelAt": [
+        295,
+        63
+      ]
+    },
+    {
+      "id": "server--guest-links",
+      "from": "server",
+      "to": "guest-links",
+      "label": "token → one file",
+      "labelAt": [
+        350,
+        126
+      ]
+    },
+    {
+      "id": "server--sqlite",
+      "from": "server",
+      "to": "sqlite",
+      "label": "workspace CRUD · SQL",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          135,
+          16
+        ],
+        [
+          775,
+          16
+        ]
+      ],
+      "labelAt": [
+        455,
+        16
+      ]
+    },
+    {
+      "id": "guest-links--sqlite",
+      "from": "guest-links",
+      "to": "sqlite",
+      "label": "token → file, count · SQL",
+      "labelAt": [
+        615,
+        63
+      ]
+    },
+    {
+      "id": "guest-links--filestore",
+      "from": "guest-links",
+      "to": "filestore",
+      "label": "stream one file · file",
+      "labelAt": [
+        685,
+        250
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The short answer",
+      "items": [
+        "A key holder's click creates a random 26-character token tied to one file id",
+        "The guest page and its download go through three public routes that only accept such a token",
+        "the router answers them before the access-key gate, and every other API route still demands a session, so the token can name one file and nothing else"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Not shown here",
+      "items": [
+        "The browsers, Cloudflare and the tunnel, which carry a guest's request exactly as in the overview",
+        "the Workspace app, where a key holder creates the link with a normal signed-in request",
+        "Connected but out of scope: cloudflared tunnel, Chunked uploads, Zip streamer, Expiry sweeper, Env file, Auto-deploy timer"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "What it guarantees",
+      "items": [
+        "A guest token opens one file and nothing else: the only unauthenticated routes are /d/<token>, /d/<token>/download and /api/guest/<token>; every other /api route hits the 401 gate, and the token resolves to a single file id",
+        "Cloudflare never caches a file: download URLs carry no file extension and every API response is Cache-Control: private, no-store"
+      ]
+    }
+  ]
+}

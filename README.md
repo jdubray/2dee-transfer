@@ -16,6 +16,18 @@ It works like WeTransfer: you get a card with a big "+", drop files in, and shar
 
 Stack: Bun, `bun:sqlite`, and vanilla JS. No runtime dependencies and no build step. This is the same shape as the kizo appliance on jj.2dee.org.
 
+## Architecture
+
+[`docs/architecture/`](docs/architecture/README.md) has the architecture analysis and nine diagrams:
+
+- what the parts are
+- how an upload, a guest link and "Download all" work
+- how deploys and access keys work
+- what deletes data
+- two proposals for new features: per-workspace access, and notifications and previews
+
+Each diagram is an HTML file; open it in a browser. They are all generated from `docs/architecture/2dee-transfer.analysis.json` by archlens, so edit that file and re-render rather than editing the HTML.
+
 ## Run locally
 
 ```bash

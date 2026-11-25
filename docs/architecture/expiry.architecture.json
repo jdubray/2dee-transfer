@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "What deletes data, and when",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/jdubray/2dee-transfer",
+      "revision": "85b3974072f986ec7436d12d8a41e797f74ab349"
+    },
+    "views": [
+      {
+        "id": "bun-process",
+        "label": "One Bun process",
+        "focus": [
+          "server",
+          "sweeper"
+        ],
+        "note": "Shares in-memory state (in-flight upload set, login rate limiter), so exactly one instance may run"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "HTTP server + router",
+      "pos": [
+        60,
+        111
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "Bun.serve, route()",
+      "sources": [
+        {
+          "path": "src/main.ts",
+          "line": 17,
+          "end_line": 33,
+          "label": "Bun.serve, 9 MiB body cap"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 377,
+          "label": "route(): public vs. key-holder routes"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 25,
+          "label": "security headers / CSP"
+        }
+      ]
+    },
+    {
+      "id": "sweeper",
+      "type": "backend",
+      "label": "Expiry sweeper",
+      "pos": [
+        380,
+        111
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "every 10 min",
+      "sources": [
+        {
+          "path": "src/app.ts",
+          "line": 139
+        },
+        {
+          "path": "src/main.ts",
+          "line": 35,
+          "end_line": 36
+        }
+      ]
+    },
+    {
+      "id": "sqlite",
+      "type": "database",
+      "label": "SQLite",
+      "pos": [
+        700,
+        48
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "transfer.db (WAL)",
+      "sources": [
+        {
+          "path": "src/db.ts",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "id": "filestore",
+      "type": "database",
+      "label": "File bytes on disk",
+      "pos": [
+        700,
+        174
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "files/, uploads/",
+      "sources": [
+        {
+          "path": "src/app.ts",
+          "line": 64,
+          "end_line": 67
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "One Bun process",
+      "wraps": [
+        "server",
+        "sweeper"
+      ],
+      "pad": 20
+    },
+    {
+      "kind": "region",
+      "label": "Ubuntu host glm",
+      "wraps": [
+        "server",
+        "sweeper",
+        "sqlite",
+        "filestore"
+      ],
+      "pad": 20
+    }
+  ],
+  "connections": [
+    {
+      "id": "server--sqlite",
+      "from": "server",
+      "to": "sqlite",
+      "label": "workspace CRUD · SQL",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          135,
+          16
+        ],
+        [
+          775,
+          16
+        ]
+      ],
+      "labelAt": [
+        455,
+        16
+      ]
+    },
+    {
+      "id": "server--sweeper",
+      "from": "server",
+      "to": "sweeper",
+      "label": "timer, startup, list views",
+      "labelAt": [
+        295,
+        126
+      ]
+    },
+    {
+      "id": "sweeper--sqlite",
+      "from": "sweeper",
+      "to": "sqlite",
+      "label": "find + delete expired · SQL",
+      "labelAt": [
+        615,
+        63
+      ]
+    },
+    {
+      "id": "sweeper--filestore",
+      "from": "sweeper",
+      "to": "filestore",
+      "label": "remove bytes · file",
+      "labelAt": [
+        678,
+        126
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The short answer",
+      "items": [
+        "The Expiry sweeper, inside the server process, runs at startup, every ten minutes and whenever the workspace list is opened",
+        "It deletes workspaces past their expiry date (files, guest links and bytes together) and partial uploads idle for a day"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Not shown here",
+      "items": [
+        "Deletes a key holder makes by hand (a file or a workspace), which run the same removal immediately from the router",
+        "Connected but out of scope: cloudflared tunnel, Access keys, Chunked uploads, Guest links, Zip streamer, Env file"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Trade-offs",
+      "items": [
+        "Expiry really deletes: bytes, metadata and guest links go together: keeps the disk bounded with no admin chores, at the cost of no undo; the default is 30 days"
+      ]
+    }
+  ]
+}

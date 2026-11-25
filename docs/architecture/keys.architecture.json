@@ -1,0 +1,248 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "How access keys are created and checked",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/jdubray/2dee-transfer",
+      "revision": "85b3974072f986ec7436d12d8a41e797f74ab349"
+    },
+    "views": [
+      {
+        "id": "answer",
+        "label": "How access keys are created and checked",
+        "focus": [
+          "auth",
+          "config"
+        ],
+        "note": "An admin runs add-keys.sh over SSH; it generates a key per name, writes TRANSFER_ACCESS_KEYS into the root-only env file, prints the keys o…"
+      },
+      {
+        "id": "bun-process",
+        "label": "One Bun process",
+        "focus": [
+          "server",
+          "auth"
+        ],
+        "note": "Shares in-memory state (in-flight upload set, login rate limiter), so exactly one instance may run"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "admin-scripts",
+      "type": "frontend",
+      "label": "Admin scripts",
+      "pos": [
+        60,
+        111
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "run with sudo over SSH",
+      "sources": [
+        {
+          "path": "deploy/install.sh"
+        },
+        {
+          "path": "deploy/add-keys.sh"
+        },
+        {
+          "path": "deploy/setup-tunnel.sh"
+        }
+      ]
+    },
+    {
+      "id": "config",
+      "type": "database",
+      "label": "Env file",
+      "pos": [
+        700,
+        48
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "/etc/2dee-transfer.env",
+      "sources": [
+        {
+          "path": "deploy/2dee-transfer.env.example"
+        },
+        {
+          "path": "src/config.ts",
+          "line": 76
+        }
+      ]
+    },
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "HTTP server + router",
+      "pos": [
+        380,
+        111
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "Bun.serve, route()",
+      "sources": [
+        {
+          "path": "src/main.ts",
+          "line": 17,
+          "end_line": 33,
+          "label": "Bun.serve, 9 MiB body cap"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 377,
+          "label": "route(): public vs. key-holder routes"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 25,
+          "label": "security headers / CSP"
+        }
+      ]
+    },
+    {
+      "id": "auth",
+      "type": "security",
+      "label": "Access keys",
+      "pos": [
+        700,
+        174
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "HMAC session cookie",
+      "sources": [
+        {
+          "path": "src/auth.ts",
+          "line": 28,
+          "end_line": 61
+        },
+        {
+          "path": "src/config.ts",
+          "line": 49,
+          "label": "parseAccessKeys"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 425,
+          "end_line": 452,
+          "label": "login + the 401 gate"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "One Bun process",
+      "wraps": [
+        "server",
+        "auth"
+      ],
+      "pad": 20
+    },
+    {
+      "kind": "region",
+      "label": "Ubuntu host glm",
+      "wraps": [
+        "server",
+        "auth",
+        "config",
+        "admin-scripts"
+      ],
+      "pad": 20
+    }
+  ],
+  "connections": [
+    {
+      "id": "server--auth",
+      "from": "server",
+      "to": "auth",
+      "label": "check session",
+      "labelAt": [
+        663,
+        126
+      ]
+    },
+    {
+      "id": "server--config",
+      "from": "server",
+      "to": "config",
+      "label": "read at startup · file",
+      "labelAt": [
+        615,
+        63
+      ]
+    },
+    {
+      "id": "admin-scripts--config",
+      "from": "admin-scripts",
+      "to": "config",
+      "label": "write TRANSFER_ACCESS_KEYS · file",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          135,
+          16
+        ],
+        [
+          775,
+          16
+        ]
+      ],
+      "labelAt": [
+        455,
+        16
+      ]
+    },
+    {
+      "id": "admin-scripts--server",
+      "from": "admin-scripts",
+      "to": "server",
+      "label": "install, restart · signal",
+      "labelAt": [
+        295,
+        126
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The short answer",
+      "items": [
+        "An admin runs add-keys.sh over SSH",
+        "it generates a key per name, writes TRANSFER_ACCESS_KEYS into the root-only env file, prints the keys once and restarts the server",
+        "The server hands those keys to Access keys, which matches a typed key to a person and signs a session cookie with that person's key, so each key can be rotated alone"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Not shown here",
+      "items": [
+        "Visitors' browsers, which only ever see their own key and a signed cookie",
+        "Connected but out of scope: cloudflared tunnel, Chunked uploads, Guest links, Zip streamer, SQLite, Expiry sweeper"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Doctrine",
+      "items": [
+        "Access keys exist only in /etc/2dee-transfer.env: the repository is public; add-keys.sh generates keys on the host and prints them once"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,472 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "What the parts are and where they run",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/jdubray/2dee-transfer",
+      "revision": "85b3974072f986ec7436d12d8a41e797f74ab349"
+    },
+    "views": [
+      {
+        "id": "answer",
+        "label": "What the parts are and where they run",
+        "focus": [
+          "server",
+          "auth"
+        ],
+        "note": "Two browser pages talk HTTPS to Cloudflare, which relays through an outbound tunnel to a single Bun process on the Ubuntu host. Inside that…"
+      },
+      {
+        "id": "visitor-devices",
+        "label": "Visitors' browsers",
+        "focus": [
+          "spa",
+          "guest-page"
+        ],
+        "note": "Runs on devices we do not control; anything sent from here can be forged, so the server re-checks every rule"
+      },
+      {
+        "id": "bun-process",
+        "label": "One Bun process",
+        "focus": [
+          "server",
+          "auth",
+          "uploads",
+          "guest-links"
+        ],
+        "note": "Shares in-memory state (in-flight upload set, login rate limiter), so exactly one instance may run"
+      },
+      {
+        "id": "host",
+        "label": "Ubuntu host glm",
+        "focus": [
+          "tunnel",
+          "server",
+          "auth",
+          "uploads",
+          "guest-links",
+          "sqlite"
+        ],
+        "note": "Nothing here listens on a public interface; the only way in is the outbound Cloudflare tunnel or SSH on the LAN"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "spa",
+      "type": "frontend",
+      "label": "Workspace app",
+      "pos": [
+        60,
+        48
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "vanilla JS",
+      "sources": [
+        {
+          "path": "public/static/app.js",
+          "line": 180,
+          "label": "render / routing"
+        },
+        {
+          "path": "public/static/app.js",
+          "line": 689,
+          "label": "runUpload: chunk loop + retry"
+        },
+        {
+          "path": "public/static/app.js",
+          "line": 601,
+          "label": "shareFile: guest link"
+        }
+      ]
+    },
+    {
+      "id": "guest-page",
+      "type": "frontend",
+      "label": "Guest download page",
+      "pos": [
+        60,
+        113
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "/d/<token>",
+      "sources": [
+        {
+          "path": "public/static/guest.js",
+          "line": 53
+        },
+        {
+          "path": "public/download.html"
+        }
+      ]
+    },
+    {
+      "id": "cloudflare",
+      "type": "external",
+      "label": "Cloudflare edge",
+      "pos": [
+        283,
+        208
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "TLS, DNS, 100 MB cap"
+    },
+    {
+      "id": "tunnel",
+      "type": "security",
+      "label": "cloudflared tunnel",
+      "pos": [
+        506,
+        367
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "2dee-transfer tunnel",
+      "sources": [
+        {
+          "path": "deploy/cloudflared/config.yml.example"
+        },
+        {
+          "path": "deploy/systemd/cloudflared-transfer.service"
+        },
+        {
+          "path": "deploy/setup-tunnel.sh"
+        }
+      ]
+    },
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "HTTP server + router",
+      "pos": [
+        729,
+        367
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "Bun.serve, route()",
+      "sources": [
+        {
+          "path": "src/main.ts",
+          "line": 17,
+          "end_line": 33,
+          "label": "Bun.serve, 9 MiB body cap"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 377,
+          "label": "route(): public vs. key-holder routes"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 25,
+          "label": "security headers / CSP"
+        }
+      ]
+    },
+    {
+      "id": "auth",
+      "type": "security",
+      "label": "Access keys",
+      "pos": [
+        951,
+        302
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "HMAC session cookie",
+      "sources": [
+        {
+          "path": "src/auth.ts",
+          "line": 28,
+          "end_line": 61
+        },
+        {
+          "path": "src/config.ts",
+          "line": 49,
+          "label": "parseAccessKeys"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 425,
+          "end_line": 452,
+          "label": "login + the 401 gate"
+        }
+      ]
+    },
+    {
+      "id": "uploads",
+      "type": "backend",
+      "label": "Chunked uploads",
+      "pos": [
+        951,
+        367
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "offset-checked",
+      "sources": [
+        {
+          "path": "src/app.ts",
+          "line": 248,
+          "label": "createUpload"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 288,
+          "label": "appendChunk"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 227,
+          "label": "checkQuota"
+        }
+      ]
+    },
+    {
+      "id": "guest-links",
+      "type": "backend",
+      "label": "Guest links",
+      "pos": [
+        951,
+        432
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "1 token = 1 file",
+      "sources": [
+        {
+          "path": "src/app.ts",
+          "line": 183,
+          "label": "guestFile"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 391,
+          "label": "public /d and /api/guest routes"
+        }
+      ]
+    },
+    {
+      "id": "sqlite",
+      "type": "database",
+      "label": "SQLite",
+      "pos": [
+        1174,
+        367
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "transfer.db (WAL)",
+      "sources": [
+        {
+          "path": "src/db.ts",
+          "line": 45
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Visitors' browsers",
+      "wraps": [
+        "spa",
+        "guest-page"
+      ],
+      "pad": 20
+    },
+    {
+      "kind": "region",
+      "label": "One Bun process",
+      "wraps": [
+        "server",
+        "auth",
+        "uploads",
+        "guest-links"
+      ],
+      "pad": 20
+    },
+    {
+      "kind": "region",
+      "label": "Ubuntu host glm",
+      "wraps": [
+        "tunnel",
+        "server",
+        "auth",
+        "uploads",
+        "guest-links",
+        "sqlite"
+      ],
+      "pad": 20
+    }
+  ],
+  "connections": [
+    {
+      "id": "spa--cloudflare",
+      "from": "spa",
+      "to": "cloudflare",
+      "label": "API calls, chunks · HTTPS",
+      "labelAt": [
+        335,
+        189
+      ],
+      "variant": "security"
+    },
+    {
+      "id": "guest-page--cloudflare",
+      "from": "guest-page",
+      "to": "cloudflare",
+      "label": "open link, download · HTTPS",
+      "labelAt": [
+        327,
+        120
+      ],
+      "variant": "security"
+    },
+    {
+      "id": "cloudflare--tunnel",
+      "from": "cloudflare",
+      "to": "tunnel",
+      "label": "tunnel · HTTPS",
+      "labelAt": [
+        480,
+        216
+      ],
+      "variant": "security"
+    },
+    {
+      "id": "tunnel--server",
+      "from": "tunnel",
+      "to": "server",
+      "label": "to 127.0.0.1:4180 · HTTP",
+      "labelAt": [
+        703,
+        443
+      ]
+    },
+    {
+      "id": "server--auth",
+      "from": "server",
+      "to": "auth",
+      "label": "check session",
+      "labelAt": [
+        992,
+        508
+      ],
+      "variant": "emphasis"
+    },
+    {
+      "id": "server--uploads",
+      "from": "server",
+      "to": "uploads",
+      "label": "start upload / append chunk",
+      "labelAt": [
+        995,
+        508
+      ]
+    },
+    {
+      "id": "server--guest-links",
+      "from": "server",
+      "to": "guest-links",
+      "label": "token → one file",
+      "labelAt": [
+        926,
+        508
+      ]
+    },
+    {
+      "id": "server--sqlite",
+      "from": "server",
+      "to": "sqlite",
+      "label": "workspace CRUD · SQL",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          804,
+          267
+        ],
+        [
+          1249,
+          267
+        ]
+      ],
+      "labelAt": [
+        1027,
+        267
+      ]
+    },
+    {
+      "id": "uploads--sqlite",
+      "from": "uploads",
+      "to": "sqlite",
+      "label": "reserve quota, track offset · SQL",
+      "labelAt": [
+        1230,
+        443
+      ]
+    },
+    {
+      "id": "guest-links--sqlite",
+      "from": "guest-links",
+      "to": "sqlite",
+      "label": "token → file, count · SQL",
+      "labelAt": [
+        1149,
+        508
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The short answer",
+      "items": [
+        "Two browser pages talk HTTPS to Cloudflare, which relays through an outbound tunnel to a single Bun process on the Ubuntu host",
+        "Inside that process one router sends every request through the access-key gate (or the narrow guest-link door) to the upload engine, guest links or the zip streamer, which share SQLite for metadata and a folder of randomly-named files for bytes"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Not shown here",
+      "items": [
+        "The Zip streamer and the file store (shown in the 'Download all' and upload questions), the expiry sweeper, and deployment (auto-deploy, admin scripts, env file), which have their own questions",
+        "proposed features",
+        "Connected but out of scope: Zip streamer, Expiry sweeper, Env file, File bytes on disk, Auto-deploy timer, Admin scripts"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Constraints",
+      "items": [
+        "Run exactly one server process: the in-flight upload set and the login rate limiter live in memory; two instances would each believe they own an upload",
+        "Only code inside the Bun process reads or writes the database: the browsers and the edge reach data only through the HTTP routes, where the auth gate and guest scope are enforced"
+      ]
+    }
+  ]
+}

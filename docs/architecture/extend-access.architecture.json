@@ -1,0 +1,276 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "How per-workspace access would work",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/jdubray/2dee-transfer",
+      "revision": "85b3974072f986ec7436d12d8a41e797f74ab349"
+    },
+    "views": [
+      {
+        "id": "bun-process",
+        "label": "One Bun process",
+        "focus": [
+          "server",
+          "auth",
+          "guest-links"
+        ],
+        "note": "Shares in-memory state (in-flight upload set, login rate limiter), so exactly one instance may run"
+      },
+      {
+        "id": "host",
+        "label": "Ubuntu host glm",
+        "focus": [
+          "server",
+          "auth",
+          "guest-links",
+          "sqlite"
+        ],
+        "note": "Nothing here listens on a public interface; the only way in is the outbound Cloudflare tunnel or SSH on the LAN"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "HTTP server + router",
+      "pos": [
+        60,
+        98
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "Bun.serve, route()",
+      "sources": [
+        {
+          "path": "src/main.ts",
+          "line": 17,
+          "end_line": 33,
+          "label": "Bun.serve, 9 MiB body cap"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 377,
+          "label": "route(): public vs. key-holder routes"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 25,
+          "label": "security headers / CSP"
+        }
+      ]
+    },
+    {
+      "id": "auth",
+      "type": "security",
+      "label": "Access keys",
+      "pos": [
+        380,
+        48
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "HMAC session cookie",
+      "sources": [
+        {
+          "path": "src/auth.ts",
+          "line": 28,
+          "end_line": 61
+        },
+        {
+          "path": "src/config.ts",
+          "line": 49,
+          "label": "parseAccessKeys"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 425,
+          "end_line": 452,
+          "label": "login + the 401 gate"
+        }
+      ]
+    },
+    {
+      "id": "members",
+      "type": "database",
+      "label": "Workspace members",
+      "pos": [
+        380,
+        298
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "proposed ACL table",
+      "tag": "planned"
+    },
+    {
+      "id": "sqlite",
+      "type": "database",
+      "label": "SQLite",
+      "pos": [
+        700,
+        98
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "transfer.db (WAL)",
+      "sources": [
+        {
+          "path": "src/db.ts",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "id": "guest-links",
+      "type": "backend",
+      "label": "Guest links",
+      "pos": [
+        380,
+        149
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "sublabel": "1 token = 1 file",
+      "sources": [
+        {
+          "path": "src/app.ts",
+          "line": 183,
+          "label": "guestFile"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 391,
+          "label": "public /d and /api/guest routes"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "One Bun process",
+      "wraps": [
+        "server",
+        "auth",
+        "guest-links"
+      ],
+      "pad": 20
+    },
+    {
+      "kind": "region",
+      "label": "Ubuntu host glm",
+      "wraps": [
+        "server",
+        "auth",
+        "guest-links",
+        "sqlite"
+      ],
+      "pad": 20
+    }
+  ],
+  "connections": [
+    {
+      "id": "server--auth",
+      "from": "server",
+      "to": "auth",
+      "label": "check session",
+      "labelAt": [
+        295,
+        60
+      ]
+    },
+    {
+      "id": "server--guest-links",
+      "from": "server",
+      "to": "guest-links",
+      "label": "token → one file",
+      "labelAt": [
+        350,
+        124
+      ]
+    },
+    {
+      "id": "server--sqlite",
+      "from": "server",
+      "to": "sqlite",
+      "label": "workspace CRUD · SQL",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          135,
+          13
+        ],
+        [
+          775,
+          13
+        ]
+      ],
+      "labelAt": [
+        455,
+        13
+      ]
+    },
+    {
+      "id": "guest-links--sqlite",
+      "from": "guest-links",
+      "to": "sqlite",
+      "label": "token → file, count · SQL",
+      "labelAt": [
+        615,
+        110
+      ]
+    },
+    {
+      "id": "server--members",
+      "from": "server",
+      "to": "members",
+      "label": "may this key see it? · SQL",
+      "labelAt": [
+        374,
+        138
+      ],
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The short answer",
+      "items": [
+        "Proposal: a members table (workspace, key name, role) checked in the router right after the existing 401 gate",
+        "Workspace routes already funnel through one lookup, so the change is one check plus a members section in Workspace settings",
+        "guest links are unaffected because they never open a workspace"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Not shown here",
+      "items": [
+        "Browsers, edge and storage of file bytes, none of which change",
+        "Connected but out of scope: cloudflared tunnel, Chunked uploads, Zip streamer, Expiry sweeper, Env file, File bytes on disk"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "Risks",
+      "items": [
+        "Every key holder can see, download and delete every workspace: there are no per-workspace permissions; fine for a circle that trusts each other, wrong for mixing groups (see the planned members table)"
+      ]
+    }
+  ]
+}
